@@ -3,11 +3,17 @@ Created By: Azure Robinson (Robinson-27225)
 */
 
 import {
+    BARK_OPACITY,
     COLORS,
+    CROWN_SHADOW_OFFSET,
+    CROWN_SHADOW_OPACITY,
+    GROUND,
+    GROUND_OPACITY,
     HEIGHT,
     INNER_BRANCH_OPACITY,
     LIGHT,
     WIDTH,
+    barkLines,
     buildTree,
     colorFor,
     crownColors,
@@ -33,6 +39,18 @@ function svgElement(name, attributes = {}) {
 }
 
 const round = (n) => Math.round(n * 10) / 10;
+
+/** One path for a set of circles. They are all drawn the same way round, so filling it fills their union. */
+function circlesPath(circles) {
+    return circles
+        .map((c) => {
+            const r = round(c.r);
+            return `M${round(c.x + c.r)} ${round(c.y)}A${r} ${r} 0 1 0 ${round(c.x - c.r)} ${round(
+                c.y
+            )}A${r} ${r} 0 1 0 ${round(c.x + c.r)} ${round(c.y)}Z`;
+        })
+        .join("");
+}
 
 /**
  * Draw the tree as SVG so the words can be hovered, clicked and zoomed as they are. Returns the group that zoom moves and
@@ -66,16 +84,60 @@ export function renderTreeSvg(svg, items, tree = buildTree(1)) {
     bark.appendChild(svgElement("stop", { "offset": "0", "stop-color": COLORS.trunkLight }));
     bark.appendChild(svgElement("stop", { "offset": "1", "stop-color": COLORS.trunkDark }));
     defs.appendChild(bark);
-    // every circle is drawn the same way round, so one path fills their union
-    const trunkPath = tree.trunk
-        .map(
-            (c) =>
-                `M${round(c.x + c.r)} ${round(c.y)}A${round(c.r)} ${round(c.r)} 0 1 0 ${round(c.x - c.r)} ${round(
-                    c.y
-                )}A${round(c.r)} ${round(c.r)} 0 1 0 ${round(c.x + c.r)} ${round(c.y)}Z`
-        )
-        .join("");
+    const trunkPath = circlesPath(tree.trunk);
     viewport.appendChild(svgElement("path", { class: "sutree-trunk", fill: "url(#suTreeBark)", d: trunkPath }));
+
+    // ridges of bark up the trunk, kept inside it
+    const trunkClip = svgElement("clipPath", { id: "suTreeTrunkClip" });
+    trunkClip.appendChild(svgElement("path", { d: trunkPath }));
+    defs.appendChild(trunkClip);
+    viewport.appendChild(
+        svgElement("path", {
+            "class": "sutree-bark",
+            "d": barkLines(tree)
+                .map((line) => line.map(([x, y], i) => `${i ? "L" : "M"}${round(x)} ${round(y)}`).join(""))
+                .join(""),
+            "fill": "none",
+            "stroke": COLORS.bark,
+            "stroke-width": 2.6,
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round",
+            "opacity": BARK_OPACITY,
+            "clip-path": "url(#suTreeTrunkClip)",
+            "pointer-events": "none",
+        })
+    );
+
+    // the ground the trunk stands in: a soft patch that fades out at its edges
+    const ground = svgElement("radialGradient", { id: "suTreeGround" });
+    ground.appendChild(
+        svgElement("stop", { "offset": "0", "stop-color": COLORS.groundCentre, "stop-opacity": GROUND_OPACITY })
+    );
+    ground.appendChild(svgElement("stop", { "offset": "1", "stop-color": COLORS.groundEdge, "stop-opacity": 0 }));
+    defs.appendChild(ground);
+    viewport.appendChild(
+        svgElement("ellipse", {
+            "class": "sutree-ground",
+            "cx": GROUND.x,
+            "cy": GROUND.y,
+            "rx": GROUND.rx,
+            "ry": GROUND.ry,
+            "fill": "url(#suTreeGround)",
+            "pointer-events": "none",
+        })
+    );
+
+    // the shadow the leaves cast, so the crown stands out from the trunk behind it
+    viewport.appendChild(
+        svgElement("path", {
+            "class": "sutree-shadow",
+            "d": circlesPath(tree.crown),
+            "transform": `translate(${CROWN_SHADOW_OFFSET[0]} ${CROWN_SHADOW_OFFSET[1]})`,
+            "fill": COLORS.crownShadow,
+            "opacity": CROWN_SHADOW_OPACITY,
+            "pointer-events": "none",
+        })
+    );
 
     // each clump of leaves is lit at its upper left and shadowed at its lower right
     tree.crown.forEach((lobe, i) => {

@@ -385,18 +385,18 @@ const lerp = (a, b, t) => a + (b - a) * t;
 
 /** A rough crown, like the rounded dome of an oak or a maple: lobes of leaves. buildTree bends, resizes and adds to these so no two trees match. */
 const CROWN_TEMPLATE = [
-    [500, 225, 215],
-    [315, 280, 172],
-    [690, 280, 175],
-    [190, 375, 135],
-    [815, 372, 138],
-    [395, 215, 150],
-    [610, 205, 150],
-    [385, 375, 135],
-    [630, 372, 135],
-    [500, 360, 142],
-    [260, 235, 110],
-    [745, 235, 112],
+    [500, 265, 220],
+    [315, 320, 175],
+    [690, 320, 178],
+    [190, 415, 138],
+    [815, 412, 140],
+    [395, 255, 152],
+    [610, 245, 152],
+    [385, 420, 138],
+    [630, 418, 138],
+    [500, 410, 148],
+    [260, 275, 112],
+    [745, 275, 114],
 ];
 
 /** Points along a cubic Bezier curve. */
@@ -458,12 +458,18 @@ export function joinUp(circles) {
     return circles;
 }
 
+/** The lowest the leaves come, and the ground the trunk stands on. */
+const CROWN_BOTTOM = 650;
+export const GROUND = { x: 500, y: 878, rx: 400, ry: 30 };
+
 /**
- * A tree that is different for each seed: a rounded crown of leafy lobes of uneven size and tint, leaning one way, with
- * small bumps round its edge, all joined into one mass; and a thick, leaning, curving trunk that forks into limbs of
- * different lengths, thickness and curl. Each limb runs up into a clump of leaves, and the twigs off them end in the
- * leaves too, so nothing hangs loose. Returns { crown: [{ x, y, r, hue, light }], trunk: [{ x, y, r }], tips, seed },
- * where tips are the points where limbs and twigs end, inside the crown.
+ * A tree that is different for each seed, like an oak: a broad, rounded crown of leafy lobes of uneven size and tint,
+ * leaning one way, with small bumps round its edge, all joined into one mass; a short, stout trunk that flares at the
+ * base into roots spreading over the ground; and thick limbs forking from the top of the trunk, each running up into a
+ * clump of leaves, with a branch off most of them that ends in the leaves too, so nothing hangs loose.
+ * Returns { crown: [{ x, y, r, hue, light }], trunk: [{ x, y, r }], spine, tips, seed }, where spine is the trunk's own
+ * circles from the ground up (the limbs and roots follow them in trunk), and tips are the points where limbs and
+ * branches end, inside the crown.
  */
 export function buildTree(seed = 1) {
     const random = seededRandom((seed >>> 0) ^ 0x9e3779b9);
@@ -474,8 +480,8 @@ export function buildTree(seed = 1) {
     const widthLeft = between(0.94, 1.06);
     const widthRight = between(0.94, 1.06);
     const fit = (c) => {
-        const r = clamp(c.r, 18, 230);
-        return { ...c, r, x: clamp(c.x, 8 + r, 992 - r), y: clamp(c.y, 8 + r, 600 - r) };
+        const r = clamp(c.r, 18, 235);
+        return { ...c, r, x: clamp(c.x, 8 + r, 992 - r), y: clamp(c.y, 8 + r, CROWN_BOTTOM - r) };
     };
     const body = CROWN_TEMPLATE.map(([x, y, r]) => {
         const spread = x < 500 ? widthLeft : widthRight;
@@ -487,17 +493,17 @@ export function buildTree(seed = 1) {
     });
     // now and then a lobe is missing, so the outline is not the same each time
     if (random() < 0.6) body.splice(1 + Math.floor(random() * 6), 1);
-    // small bumps of leaves round the outside
+    // many small bumps of leaves round the outside, as in a real oak's crown
     const bumps = [];
-    const bumpCount = 7 + Math.floor(random() * 6);
+    const bumpCount = 12 + Math.floor(random() * 9);
     for (let i = 0; i < bumpCount; i++) {
         const base = body[Math.floor(random() * body.length)];
-        const angle = between(Math.PI * 0.95, Math.PI * 2.05); // the top and sides, not the underside
+        const angle = between(Math.PI * 0.9, Math.PI * 2.1); // the top and sides, not the underside
         bumps.push(
             fit({
-                x: base.x + Math.cos(angle) * base.r * 0.88,
-                y: base.y + Math.sin(angle) * base.r * 0.88,
-                r: between(24, 58),
+                x: base.x + Math.cos(angle) * base.r * 0.9,
+                y: base.y + Math.sin(angle) * base.r * 0.9,
+                r: between(22, 54),
             })
         );
     }
@@ -507,24 +513,59 @@ export function buildTree(seed = 1) {
     // drawn from the top down, so lower clumps overlap the ones above them
     crown.sort((a, b) => a.y + a.r - (b.y + b.r));
 
-    // ---- the trunk, and limbs that end in clumps of leaves
+    // ---- the trunk: short, stout, widest at the ground
     const lowest = Math.max(...body.map((c) => c.y + c.r));
-    const base = [500 + between(-60, 60), 872];
-    const fork = [base[0] + between(-60, 60) + lean * 25, clamp(lowest + between(10, 70), 540, 650)];
-    const sway = between(40, 80) * (random() < 0.5 ? -1 : 1);
+    const baseX = 500 + between(-40, 40);
+    const base = [baseX, 872];
+    const fork = [baseX + between(-30, 30) + lean * 20, clamp(lowest - between(30, 100), 470, 610)];
+    // the trunk divides inside the leaves; if that point fell in a gap, move it into the nearest clump
+    if (!crown.some((c) => Math.hypot(fork[0] - c.x, fork[1] - c.y) < c.r - 10)) {
+        const near = crown.reduce((a, b) =>
+            Math.hypot(fork[0] - b.x, fork[1] - b.y) - b.r < Math.hypot(fork[0] - a.x, fork[1] - a.y) - a.r ? b : a
+        );
+        const distance = Math.hypot(fork[0] - near.x, fork[1] - near.y) || 1;
+        fork[0] = near.x + ((fork[0] - near.x) / distance) * near.r * 0.5;
+        fork[1] = near.y + ((fork[1] - near.y) / distance) * near.r * 0.5;
+    }
+    const sway = between(10, 32) * (random() < 0.5 ? -1 : 1);
+    const rise = base[1] - fork[1];
     const trunk = limb(
         base,
-        [base[0] + sway, base[1] - (base[1] - fork[1]) * 0.33],
-        [fork[0] - sway * 0.8, base[1] - (base[1] - fork[1]) * 0.7],
+        [baseX + sway, base[1] - rise * 0.35],
+        [fork[0] - sway * 0.6, base[1] - rise * 0.7],
         fork,
-        between(62, 80),
-        between(30, 40),
-        0.8
+        between(100, 124),
+        between(60, 72),
+        0.45 // the radius drops quickly at first: the flare at the foot
     );
+    const spine = trunk.slice();
+
+    // roots spreading over the ground, thick where they leave the trunk and thinning as they go
+    const rootCount = 4 + Math.floor(random() * 3);
+    for (let i = 0; i < rootCount; i++) {
+        const side = i % 2 ? 1 : -1;
+        // the first two reach well past the foot of the trunk, so they show; the others are shorter
+        const footRadius = spine[0].r;
+        const reach = footRadius * (i < 2 ? between(1.4, 2.5) : between(1.15, 1.7));
+        const start = [baseX + side * between(25, 60), base[1] - between(70, 120)];
+        const end = [clamp(baseX + side * reach, 60, 940), 862 + between(-8, 2)];
+        trunk.push(
+            ...limb(
+                start,
+                [start[0] + side * between(30, 70), start[1] + between(0, 30)],
+                [end[0] - side * between(40, 90), end[1] - between(25, 55)],
+                end,
+                between(40, 54),
+                between(8, 13),
+                0.7
+            )
+        );
+    }
+
+    // ---- limbs that fork from the top of the trunk and end in clumps of leaves
     const tips = [];
-    // limbs go to the lower clumps of leaves, spread across the crown
-    const lower = body.filter((c) => c.y + c.r > lowest - 230).sort((a, b) => a.x - b.x);
-    const limbCount = Math.min(lower.length, random() < 0.35 ? 4 : 3);
+    const lower = body.filter((c) => c.y + c.r > lowest - 240).sort((a, b) => a.x - b.x);
+    const limbCount = Math.min(lower.length, random() < 0.4 ? 4 : 3);
     const used = new Set();
     for (let i = 0; i < limbCount; i++) {
         const wanted = lerp(210, 790, (i + 0.5) / limbCount) + between(-50, 50);
@@ -535,21 +576,21 @@ export function buildTree(seed = 1) {
         // the tip is well inside the clump, so the limb is hidden in the leaves where it ends
         const tip = [target.x + between(-0.3, 0.3) * target.r, target.y + between(-0.2, 0.35) * target.r];
         const dx = tip[0] - fork[0];
-        const body1 = limb(
+        const thisLimb = limb(
             fork,
-            [fork[0] + dx * between(0.05, 0.3), fork[1] - between(50, 130)],
-            [tip[0] - dx * between(0.1, 0.35), tip[1] + between(30, 110)],
+            [fork[0] + dx * between(0.05, 0.3), fork[1] - between(40, 110)],
+            [tip[0] - dx * between(0.1, 0.35), tip[1] + between(30, 100)],
             tip,
-            between(24, 33),
-            between(6, 11),
-            between(0.7, 1.1)
+            between(32, 42),
+            between(8, 12),
+            between(0.6, 1)
         );
-        trunk.push(...body1);
+        trunk.push(...thisLimb);
         tips.push({ x: tip[0], y: tip[1] });
-        // a twig off most limbs, growing up into the leaves
-        if (random() < 0.8) {
-            const at = body1[Math.floor(body1.length * between(0.4, 0.75))];
-            const near = body.filter((c) => Math.hypot(c.x - at.x, c.y - at.y) < 340 && c !== target);
+        // a branch off most limbs, forking away and growing up into the leaves
+        if (random() < 0.85) {
+            const at = thisLimb[Math.floor(thisLimb.length * between(0.35, 0.7))];
+            const near = body.filter((c) => Math.hypot(c.x - at.x, c.y - at.y) < 360 && c !== target);
             if (near.length) {
                 const goal = near[Math.floor(random() * near.length)];
                 const end = [goal.x + between(-0.35, 0.35) * goal.r, goal.y + between(-0.35, 0.35) * goal.r];
@@ -560,8 +601,8 @@ export function buildTree(seed = 1) {
                         [at.x + side * between(5, 25), at.y - between(20, 60)],
                         [end[0] - side * between(10, 40), end[1] + between(20, 60)],
                         end,
-                        at.r * 0.7,
-                        3.5,
+                        at.r * 0.75,
+                        5,
                         0.9
                     )
                 );
@@ -569,7 +610,33 @@ export function buildTree(seed = 1) {
             }
         }
     }
-    return { crown, trunk, tips, seed };
+    return { crown, trunk, spine, tips, seed };
+}
+
+/**
+ * Lines of bark: ridges running up the trunk, as polylines [[x, y], ...]. Each follows the trunk's spine at a place across
+ * its width, wobbling a little, and covers part of its height. Drawn faintly over the trunk, they give it the grain of oak.
+ */
+export function barkLines(tree) {
+    const spine = tree.spine || [];
+    if (spine.length < 4) return [];
+    const random = seededRandom(((tree.seed || 1) >>> 0) ^ 0x51ed270b);
+    const between = (lo, hi) => lo + random() * (hi - lo);
+    const lines = [];
+    const count = 10 + Math.floor(random() * 6);
+    for (let i = 0; i < count; i++) {
+        const across = lerp(-0.86, 0.86, (i + random() * 0.7) / count); // -1 is the left edge, 1 the right
+        const length = between(0.22, 0.6);
+        const from = random() * (1 - length);
+        const points = [];
+        for (let k = 0; k <= 12; k++) {
+            const t = from + (length * k) / 12;
+            const c = spine[Math.round(t * (spine.length - 1))];
+            points.push([c.x + (across + Math.sin(t * 11 + i * 1.7) * 0.05) * c.r, c.y]);
+        }
+        lines.push(points);
+    }
+    return lines;
 }
 
 /** Rasterize circles into a mask of grid cells. */
@@ -590,6 +657,8 @@ function paintCircles(mask, cols, rows, circles, skip) {
 }
 
 const DEFAULT_TREE_SEED = 1;
+/** Words stop above this line, where the ground begins. */
+const GROUND_TEXT_LIMIT = 856;
 
 /** Which cells of the layout grid are inside the crown, and inside the trunk and limbs (the part the crown does not cover). */
 export function buildMasks(tree = buildTree(DEFAULT_TREE_SEED)) {
@@ -599,6 +668,8 @@ export function buildMasks(tree = buildTree(DEFAULT_TREE_SEED)) {
     const trunk = new Uint8Array(cols * rows);
     paintCircles(crown, cols, rows, tree.crown);
     paintCircles(trunk, cols, rows, tree.trunk, crown);
+    // no words on the strip of ground the trunk stands in
+    for (let row = Math.floor(GROUND_TEXT_LIMIT / CELL); row < rows; row++) trunk.fill(0, row * cols, (row + 1) * cols);
     return { cols, rows, crown, trunk };
 }
 
@@ -693,7 +764,7 @@ export function layoutWords({ words, measure, random = Math.random, fillGaps = t
     const { cols, rows } = masks;
     const regions = {
         crown: { mask: masks.crown, ...centroid(masks.crown, cols), stretchX: 1.5, stretchY: 1 },
-        trunk: { mask: masks.trunk, ...centroid(masks.trunk, cols), stretchX: 0.55, stretchY: 1.7 },
+        trunk: { mask: masks.trunk, ...centroid(masks.trunk, cols), stretchX: 1.0, stretchY: 1.3 },
     };
     const taken = new Uint8Array(cols * rows);
     const placed = [];
@@ -847,12 +918,22 @@ export const COLORS = {
     trunkLight: "#f1e4cd",
     trunkDark: "#cdb48f",
     trunkInner: "#6e4a1e", // the limbs as they show through the leaves
+    bark: "#5b3a14", // lines of bark
+    groundCentre: "#cfdcb6",
+    groundEdge: "#cfdcb6",
+    crownShadow: "#2f5d34",
     crownWords: ["#1f8f2b", "#2ba03a", "#3aaa49", "#52b85a", "#1a7a26", "#6cc274"],
     trunkWords: ["#7a4510", "#8b5a1c", "#6b3a0c", "#9a6a2a", "#5d3309"],
 };
 
+/** How strongly the bark lines, the shadow under the leaves, and the ground patch show. */
+export const BARK_OPACITY = 0.3;
+export const CROWN_SHADOW_OPACITY = 0.28;
+export const CROWN_SHADOW_OFFSET = [6, 13];
+export const GROUND_OPACITY = 0.85;
+
 /** How strongly the limbs show through the leaves. */
-export const INNER_BRANCH_OPACITY = 0.12;
+export const INNER_BRANCH_OPACITY = 0.2;
 
 /** The two greens of a clump of leaves: lit at its upper left, shadowed towards the lower right. */
 export function crownColors(lobe) {

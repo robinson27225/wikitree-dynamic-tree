@@ -60,8 +60,10 @@ The code has no dependencies of its own beyond the page's jQuery and the `WikiTr
 
 ## How the tree is made
 
-`buildTree(seed)` grows a tree from the starting person's number: a dome-shaped crown of leafy lobes of uneven size and
-tint, leaning one way and joined into one mass; a thick, curving trunk forking into limbs that each end inside a lobe;
-twigs that end in the leaves. `layoutWords()` places words largest first, each spiralling out until it fits wholly inside
+`buildTree(seed)` grows an oak from the starting person's number: a broad, rounded crown of leafy lobes of uneven size, with
+many small bumps round the edge, leaning one way and joined into one mass; a short, stout trunk that is widest at the ground
+and flares into roots spreading over it; thick limbs forking from the top of the trunk inside the leaves, each ending in a
+clump of leaves, with a branch off most of them. Ridges of bark run up the trunk and a soft patch of ground sits at its foot.
+`layoutWords()` places words largest first, each spiralling out until it fits wholly inside
 the crown or trunk and clear of the others, at any angle (the first few and the biggest stay level so they read easily).
 `renderTreeSvg()` draws it, with each clump of leaves lit at its upper left and shadowed at its lower right.

@@ -3,11 +3,17 @@ Created By: Azure Robinson (Robinson-27225)
 */
 
 import {
+    BARK_OPACITY,
     COLORS,
+    CROWN_SHADOW_OFFSET,
+    CROWN_SHADOW_OPACITY,
+    GROUND,
+    GROUND_OPACITY,
     HEIGHT,
     INNER_BRANCH_OPACITY,
     LIGHT,
     WIDTH,
+    barkLines,
     buildTree,
     colorFor,
     crownColors,
@@ -25,6 +31,12 @@ export function makeMeasure() {
         g.font = treeFont(size);
         return g.measureText(text).width;
     };
+}
+
+/** A hex colour as rgba(), for a gradient stop. */
+function withAlpha(hex, alpha) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
 /** The left and right edges of the trunk and limbs, so shading can run across them. */
@@ -59,6 +71,52 @@ export function drawTree(canvas, items, scale = 2, tree = buildTree(1)) {
         g.arc(c.x, c.y, c.r, 0, Math.PI * 2);
     });
     g.fill();
+
+    // ridges of bark up the trunk, kept inside it
+    g.save();
+    g.beginPath();
+    tree.trunk.forEach((c) => {
+        g.moveTo(c.x + c.r, c.y);
+        g.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    });
+    g.clip();
+    g.globalAlpha = BARK_OPACITY;
+    g.strokeStyle = COLORS.bark;
+    g.lineWidth = 2.6;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    barkLines(tree).forEach((line) => {
+        g.beginPath();
+        line.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+        g.stroke();
+    });
+    g.restore();
+
+    // the ground the trunk stands in: a soft patch that fades out at its edges
+    g.save();
+    g.translate(GROUND.x, GROUND.y);
+    g.scale(1, GROUND.ry / GROUND.rx);
+    const turf = g.createRadialGradient(0, 0, 0, 0, 0, GROUND.rx);
+    turf.addColorStop(0, withAlpha(COLORS.groundCentre, GROUND_OPACITY));
+    turf.addColorStop(1, withAlpha(COLORS.groundEdge, 0));
+    g.fillStyle = turf;
+    g.beginPath();
+    g.arc(0, 0, GROUND.rx, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+
+    // the shadow the leaves cast, so the crown stands out from the trunk behind it
+    g.save();
+    g.translate(CROWN_SHADOW_OFFSET[0], CROWN_SHADOW_OFFSET[1]);
+    g.globalAlpha = CROWN_SHADOW_OPACITY;
+    g.fillStyle = COLORS.crownShadow;
+    g.beginPath();
+    tree.crown.forEach((c) => {
+        g.moveTo(c.x + c.r, c.y);
+        g.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    });
+    g.fill();
+    g.restore();
 
     // each clump of leaves is lit at its upper left and shadowed at its lower right
     tree.crown.forEach((lobe) => {
