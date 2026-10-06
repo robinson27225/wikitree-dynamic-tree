@@ -3,6 +3,7 @@ Created By: Azure Robinson (Robinson-27225)
 */
 
 import {
+    LOOKS,
     SCOPES,
     buildMasks,
     buildTree,
@@ -10,6 +11,7 @@ import {
     NAME_KINDS,
     fullName,
     kindById,
+    lookById,
     groupNames,
     hashString,
     layoutWords,
@@ -17,6 +19,16 @@ import {
     seededRandom,
 } from "./surname_tree_core.js";
 import { fetchScope } from "./surname_tree_data.js";
+import {
+    DEFAULT_SENSITIVITY,
+    MAX_SENSITIVITY,
+    MIN_COVERAGE,
+    MIN_SENSITIVITY,
+    backdropDataUrl,
+    readImageFile,
+    shapeFromPixels,
+    wordColour,
+} from "./surname_tree_image.js";
 import { makeMeasure } from "./surname_tree_draw.js";
 import {
     DEFAULT_SIZE,
@@ -58,7 +70,12 @@ export function mountApp(container, key, options) {
         adoptive: options.adoptive !== false,
         fillGaps: options.fillGaps !== false,
         seed: hashString(String(key)),
-        tree: buildTree(hashString(String(key))),
+        shape: buildTree(hashString(String(key))), // what the words fill: an oak, or the shape cut out of a picture
+        look: lookById(options.look).id,
+        shapeKind: "tree", // "tree" or "image"
+        picture: null, // { pixels, rect, name } once the member has chosen one
+        sensitivity: DEFAULT_SENSITIVITY,
+        shapeNote: "",
         name: "",
         id: String(key), // the person's WikiTree ID, once it is known (the Tree Apps page gives their number)
         loaded: {}, // what the API gave, by reach and amount, so ticking, shuffling and stepping back do not ask again
@@ -82,6 +99,18 @@ export function mountApp(container, key, options) {
       <div class="sutree-dialog">
         <div class="sutree-controls">
           <label>Tree of <select id="suTreeKind"></select></label>
+          <label>Look <select id="suTreeLook"></select></label>
+          <label>Shape
+            <select id="suTreeShapeKind">
+              <option value="tree">Oak tree</option>
+              <option value="image">My picture</option>
+            </select>
+          </label>
+          <button type="button" id="suTreeChoose" title="Choose a picture to use as the shape" hidden>Choose picture…</button>
+          <label id="suTreeSenseLabel" hidden title="Raise it to cut more of the background away; lower it to keep more of the picture">
+            Cut-out <input type="range" id="suTreeSense" min="8" max="160" step="1">
+          </label>
+          <input type="file" id="suTreeFile" accept="image/*" hidden>
           <label>Reach <select id="suTreeScope"></select></label>
           <span class="sutree-stepper" title="Go further out, or come back in">
             <button type="button" id="suTreeFewer" aria-label="One fewer">&minus;</button>
@@ -140,6 +169,14 @@ export function mountApp(container, key, options) {
     </div>`);
     const find = (selector) => $app.find(selector);
 
+    LOOKS.forEach((l) =>
+        $("<option>")
+            .val(l.id)
+            .text(l.name)
+            .prop("selected", l.id === state.look)
+            .appendTo(find("#suTreeLook"))
+    );
+    find("#suTreeSense").attr({ min: MIN_SENSITIVITY, max: MAX_SENSITIVITY }).val(state.sensitivity);
     NAME_KINDS.forEach((k) =>
         $("<option>")
             .val(k.id)
@@ -250,16 +287,35 @@ export function mountApp(container, key, options) {
             say(emptyMessage(), true);
             return;
         }
-        // each seed is a different tree, so Shuffle changes the shape of the tree as well as where the names go
-        state.tree = buildTree(state.seed);
+        // What the words fill: the picture the member chose, or an oak. Each seed is a different oak, so Shuffle changes the shape
+        // of the tree as well as where the names go.
+        state.shapeNote = "";
+        let shape = null;
+        if (state.shapeKind === "image" && state.picture) {
+            shape = shapeFromPixels(state.picture.pixels, state.picture.rect, state.sensitivity);
+            if (shape.coverage < MIN_COVERAGE) {
+                shape = null;
+                state.shapeNote =
+                    " No shape could be found in that picture, so the oak is shown. Try the Cut-out slider, or another picture.";
+                setShapeKind("tree");
+            } else {
+                shape.picture = backdropDataUrl(shape, state.picture.pixels);
+            }
+        }
+        if (!shape) shape = buildTree(state.seed);
+        shape.look = state.look;
+        state.shape = shape;
         state.items = layoutWords({
             words: state.words,
             measure: makeMeasure(),
             random: seededRandom(state.seed),
             fillGaps: state.fillGaps,
-            masks: buildMasks(state.tree),
+            masks: shape.kind === "image" ? shape.masks : buildMasks(shape),
+            look: state.look,
         });
-        wordGroups = renderTreeSvg(svg, state.items, state.tree).words;
+        // a word in a picture's shape has the colour of the picture under it
+        if (shape.kind === "image") state.items.forEach((item) => (item.color = wordColour(shape, item)));
+        wordGroups = renderTreeSvg(svg, state.items, shape).words;
         zoom.reset();
         const shown = wordGroups.size;
         const scope = scopeInfo();
@@ -276,7 +332,7 @@ export function mountApp(container, key, options) {
                 : "";
         const cut = state.raw.truncated ? " Only the first 60,000 people were read." : "";
         say(
-            `${state.caption}${unseen}${cut} Hover a ${kind.noun} to see how many profiles it has, and click it to list them.`
+            `${state.caption}${unseen}${cut}${state.shapeNote} Hover a ${kind.noun} to see how many profiles it has, and click it to list them.`
         );
         if (state.selected) {
             if (wordFor(state.selected)) openList(state.selected, state.listShown);
@@ -319,6 +375,49 @@ export function mountApp(container, key, options) {
         closeList(); // the old list was of another kind of name
         if (state.raw.entries.length) refresh();
     });
+    const redraw = () => state.raw.entries.length && refresh();
+    find("#suTreeLook").on("change", (e) => {
+        state.look = e.target.value;
+        redraw();
+    });
+
+    // ---- the shape: an oak, or a picture of the member's own
+    /** Show the controls that go with the shape: choosing a picture, and how much of it to cut out. */
+    function setShapeKind(kind) {
+        state.shapeKind = kind;
+        find("#suTreeShapeKind").val(kind);
+        find("#suTreeChoose").prop("hidden", kind !== "image");
+        find("#suTreeSenseLabel").prop("hidden", kind !== "image");
+        if (state.picture) find("#suTreeChoose").attr("title", `Using ${state.picture.name}. Choose another picture`);
+    }
+    const chooseFile = () => find("#suTreeFile")[0].click();
+    find("#suTreeShapeKind").on("change", (e) => {
+        if (e.target.value === "image" && !state.picture) return chooseFile(); // setShapeKind follows once there is a picture
+        setShapeKind(e.target.value);
+        redraw();
+    });
+    find("#suTreeChoose").on("click", chooseFile);
+    find("#suTreeFile").on("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = ""; // so the same picture can be chosen again
+        if (!file) return setShapeKind(state.picture ? "image" : "tree");
+        say("Reading the picture...");
+        try {
+            state.picture = { ...(await readImageFile(file)), name: file.name };
+            setShapeKind("image");
+            redraw();
+        } catch (error) {
+            say(error.message, true);
+            setShapeKind(state.picture ? "image" : "tree");
+        }
+    });
+    // the file chooser was closed without a choice
+    find("#suTreeFile").on("cancel", () => setShapeKind(state.picture ? "image" : "tree"));
+    find("#suTreeSense").on("change", (e) => {
+        state.sensitivity = Number(e.target.value);
+        redraw();
+    });
+
     find("#suTreeScope").on("change", (e) => {
         state.scope = e.target.value;
         load();
@@ -513,11 +612,11 @@ export function mountApp(container, key, options) {
                 format.id === "pdf"
                     ? await renderPdf(state.items, {
                           title: `${kindById(state.kind).title} of ${state.name || "this person"}`,
-                          tree: state.tree,
+                          tree: state.shape,
                           caption: state.caption,
                           paper: state.paper,
                       })
-                    : await renderImage(state.items, format.mime, width, state.tree);
+                    : await renderImage(state.items, format.mime, width, state.shape);
         } catch (e) {
             blob = null;
         }
@@ -536,7 +635,7 @@ export function mountApp(container, key, options) {
     });
     find("#suTreeCopy").on("click", async () => {
         try {
-            const blob = await renderImage(state.items, "image/png", 1600, state.tree);
+            const blob = await renderImage(state.items, "image/png", 1600, state.shape);
             await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
             say("Copied. Paste it into a post or a document.");
         } catch (e) {

@@ -793,6 +793,38 @@ const MAX_MISSES = 15;
 export const MAX_FONT = 118;
 export const MIN_FONT = 10;
 
+/**
+ * How the picture looks. "Shaded" is the oak with gradients, a shadow under the leaves, bark, and roots in a patch of
+ * ground, and words spaced with a little air round them. "Flat two-tone" is the crisp, silhouette style of word art: solid
+ * colours, nothing shaded, and words packed tight, with many more small ones filling the gaps. `gapCells` is the gap
+ * left round a word (in layout cells), `minFont` the smallest a word may become, `shrink` how much a word that does not
+ * fit is made smaller each try, and fillLimit, fillMisses and fillSize how the small repeats that fill the gaps go.
+ */
+export const LOOKS = [
+    {
+        id: "shaded",
+        name: "Shaded",
+        gapCells: 1.5,
+        minFont: MIN_FONT,
+        shrink: 0.88,
+        fillLimit: 700,
+        fillMisses: 25,
+        fillSize: [MIN_FONT + 3, MIN_FONT + 12],
+    },
+    {
+        id: "flat",
+        name: "Flat two-tone",
+        gapCells: 0.9,
+        minFont: 7,
+        shrink: 0.93,
+        fillLimit: 2200,
+        fillMisses: 80,
+        fillSize: [8, 17],
+    },
+];
+
+export const lookById = (id) => LOOKS.find((l) => l.id === id) || LOOKS[0];
+
 /** A font size for each count: the most common name is MAX_FONT, the least common near MIN_FONT, eased so the middle is not tiny. */
 export function fontSizeFor(count, minCount, maxCount, maxFont = MAX_FONT, minFont = 14) {
     if (maxCount <= minCount) return Math.round((maxFont + minFont) / 2);
@@ -850,16 +882,27 @@ export function wordCells(item) {
  *
  * words:   [{ text, count }], most common first
  * measure: (text, fontSize) => width in logical pixels
- * masks:   from buildMasks(tree)
+ * masks:   from buildMasks(tree), or made from a picture (see surname_tree_image.js)
+ * look:    "shaded" or "flat" (see LOOKS): how tightly the words are packed and how small they may become
  * Returns [{ text, count, region: "crown" | "trunk", x, y, size, angle, w, h, rank }] where x, y is the middle of the
  * word, angle its turn in degrees, and w, h the size of its box before turning.
  */
-export function layoutWords({ words, measure, random = Math.random, fillGaps = true, masks = buildMasks() }) {
+export function layoutWords({
+    words,
+    measure,
+    random = Math.random,
+    fillGaps = true,
+    masks = buildMasks(),
+    look = "shaded",
+}) {
+    const tune = lookById(look);
     const { cols, rows } = masks;
     const regions = {
         crown: { mask: masks.crown, ...centroid(masks.crown, cols), stretchX: 1.5, stretchY: 1 },
         trunk: { mask: masks.trunk, ...centroid(masks.trunk, cols), stretchX: 1.0, stretchY: 1.3 },
     };
+    // a shape made from a picture has no trunk: there is nothing to try there
+    Object.values(regions).forEach((region) => (region.empty = !region.mask.includes(1)));
     const taken = new Uint8Array(cols * rows);
     const placed = [];
 
@@ -900,17 +943,39 @@ export function layoutWords({ words, measure, random = Math.random, fillGaps = t
         return null;
     };
 
-    const place = (word, size, regionName, angle, rank) => {
+    /**
+     * For the small words that fill the gaps: try free cells picked from anywhere in the region. A gap is found wherever it
+     * is, and when there are none left this gives up quickly, where spiralling out from the middle would search everything.
+     */
+    const findSpotInGaps = (region, cover) => {
+        const pool = region.pool;
+        for (let tries = 0; tries < 250 && pool.length; tries++) {
+            const at = Math.floor(random() * pool.length);
+            const cell = pool[at];
+            if (taken[cell]) {
+                pool[at] = pool[pool.length - 1]; // no longer free
+                pool.pop();
+                continue;
+            }
+            const col = cell % cols;
+            const row = (cell - col) / cols;
+            if (fits(region, col, row, cover)) return { col, row };
+        }
+        return null;
+    };
+
+    const place = (word, size, regionName, angle, rank, inGaps = false) => {
         const region = regions[regionName];
+        if (region.empty) return null;
         let fontSize = size;
-        while (fontSize >= MIN_FONT) {
+        while (fontSize >= tune.minFont) {
             const w = measure(word.text, fontSize);
             const h = fontSize * CAP_HEIGHT;
             const cover = boxOffsets(w, h, angle, CELL * 0.5);
-            const spot = findSpot(region, cover);
+            const spot = inGaps ? findSpotInGaps(region, cover) : findSpot(region, cover);
             if (spot) {
                 // a gap of one more cell round the word keeps the next one from touching it
-                occupy(spot.col, spot.row, boxOffsets(w, h, angle, CELL * 1.5));
+                occupy(spot.col, spot.row, boxOffsets(w, h, angle, CELL * tune.gapCells));
                 const item = {
                     text: word.text,
                     count: word.count,
@@ -926,7 +991,7 @@ export function layoutWords({ words, measure, random = Math.random, fillGaps = t
                 placed.push(item);
                 return item;
             }
-            fontSize = Math.floor(fontSize * 0.88);
+            fontSize = Math.floor(fontSize * tune.shrink);
         }
         return null;
     };
@@ -954,18 +1019,24 @@ export function layoutWords({ words, measure, random = Math.random, fillGaps = t
 
     // Pass two: if the member wants the tree filled, repeat the names at small sizes until nothing more fits.
     if (fillGaps) {
+        // the cells still free, for the gap-filling words to try (see findSpotInGaps)
+        Object.values(regions).forEach((region) => {
+            region.pool = [];
+            for (let cell = 0; cell < region.mask.length; cell++)
+                if (region.mask[cell] && !taken[cell]) region.pool.push(cell);
+        });
         let missed = 0;
         let i = 0;
-        const limit = 700;
-        while (missed < 25 && i < limit) {
+        const limit = tune.fillLimit;
+        while (missed < tune.fillMisses && i < limit) {
             const index = i % words.length;
             const word = words[index];
-            const size = Math.round(MIN_FONT + 3 + random() * 9);
+            const size = Math.round(tune.fillSize[0] + random() * (tune.fillSize[1] - tune.fillSize[0]));
             const regionName = random() < 0.8 ? "crown" : "trunk";
             const angle = chooseAngle(random, 99, size);
-            const item = place(word, size, regionName, angle, index);
+            const item = place(word, size, regionName, angle, index, true);
             if (!item) {
-                const other = place(word, size, regionName === "crown" ? "trunk" : "crown", angle, index);
+                const other = place(word, size, regionName === "crown" ? "trunk" : "crown", angle, index, true);
                 missed = other ? 0 : missed + 1;
             } else {
                 missed = 0;
@@ -1016,9 +1087,14 @@ export const COLORS = {
     groundCentre: "#cfdcb6",
     groundEdge: "#cfdcb6",
     crownShadow: "#2f5d34",
+    crownFlat: "#d4ecd4", // the flat look: one green for the crown and one tan for the trunk
+    trunkFlat: "#e9dbc2",
     crownWords: ["#1f8f2b", "#2ba03a", "#3aaa49", "#52b85a", "#1a7a26", "#6cc274"],
     trunkWords: ["#7a4510", "#8b5a1c", "#6b3a0c", "#9a6a2a", "#5d3309"],
 };
+
+/** How strongly a picture used as the shape shows behind the words. */
+export const BACKDROP_OPACITY = 0.22;
 
 /** How strongly the bark lines, the shadow under the leaves, and the ground patch show. */
 export const BARK_OPACITY = 0.3;
@@ -1043,11 +1119,16 @@ export const LIGHT = { dx: -0.32, dy: -0.38, spread: 1.2 };
 
 /**
  * The colour of a placed word: one of the greens (or browns on the trunk), made lighter towards the upper left of the tree and
- * darker towards the lower right, the way the clumps are shaded.
+ * darker towards the lower right, the way the clumps are shaded (not in the flat look). A word with its own `color` keeps it.
  */
-export function colorFor(item) {
+export function colorFor(item, look = "shaded") {
+    // a word in a shape made from a picture has the colour of the picture under it
+    if (item.color) return item.color;
     const list = item.region === "trunk" ? COLORS.trunkWords : COLORS.crownWords;
-    const [h, s, l] = hexToHsl(list[(item.rank * 7 + item.text.length) % list.length]);
+    const picked = list[(item.rank * 7 + item.text.length) % list.length];
+    // the flat look is two plain tones, so the words are not made lighter or darker by where they are
+    if (look === "flat") return picked;
+    const [h, s, l] = hexToHsl(picked);
     const toward = (item.x / WIDTH - 0.5) * 8 + (item.y / HEIGHT - 0.4) * 12; // positive towards the lower right
     return hslToHex(h, s, clamp(l - toward, 16, 58));
 }

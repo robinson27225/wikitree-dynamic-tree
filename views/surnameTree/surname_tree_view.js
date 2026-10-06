@@ -11,7 +11,7 @@
 import { mountApp } from "./surname_tree_app.js";
 
 /** The options in the address after the view (#name=...&view=surnametree&names=first&scope=cc7&degrees=5). */
-const URL_PARAMS = ["names", "scope", "generations", "degrees", "biological", "adoptive", "fill"];
+const URL_PARAMS = ["names", "scope", "generations", "degrees", "biological", "adoptive", "fill", "look"];
 
 /** "0", "false", "no" and "off" are no; anything else given is yes; not given is left to the default. */
 const asFlag = (value) => (value === undefined ? undefined : !/^(0|false|no|off)$/i.test(String(value)));
@@ -40,6 +40,7 @@ window.SurnameTreeView = class SurnameTreeView extends View {
         const container = document.querySelector(container_selector);
         this.app = mountApp(container, person_id, {
             names: params.names,
+            look: params.look,
             scope: params.scope,
             generations: parseInt(params.generations, 10),
             degrees: parseInt(params.degrees, 10),

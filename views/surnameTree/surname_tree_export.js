@@ -43,10 +43,33 @@ export const exportFileName = (key, format, width, prefix = "surname-tree") =>
 
 const toBlob = (canvas, mime, quality) => new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
 
-/** The tree drawn afresh at `width` pixels wide, as a PNG or JPEG blob (null if the browser cannot make one that big). */
-export function renderImage(items, mime, width, tree) {
+/** A picture loaded from its address, or null if it will not load (or takes more than a few seconds, so an export cannot hang). */
+const loadPicture = (url) =>
+    new Promise((resolve) => {
+        const image = new Image();
+        const giveUp = setTimeout(() => resolve(null), 4000);
+        image.onload = () => {
+            clearTimeout(giveUp);
+            resolve(image);
+        };
+        image.onerror = () => {
+            clearTimeout(giveUp);
+            resolve(null);
+        };
+        image.src = url;
+    });
+
+/**
+ * The tree drawn afresh at `width` pixels wide, as a PNG or JPEG blob (null if the browser cannot make one that big). A shape
+ * made from a picture is loaded first, so it can be drawn.
+ */
+export async function renderImage(items, mime, width, tree) {
+    let shape = tree;
+    if (tree && tree.kind === "image" && tree.picture && !tree.pictureImage) {
+        shape = { ...tree, pictureImage: await loadPicture(tree.picture) };
+    }
     const canvas = document.createElement("canvas");
-    drawTree(canvas, items, width / WIDTH, tree);
+    drawTree(canvas, items, width / WIDTH, shape);
     return toBlob(canvas, mime, mime === "image/jpeg" ? 0.92 : undefined);
 }
 

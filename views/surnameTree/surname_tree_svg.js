@@ -9,6 +9,7 @@ import {
     CROWN_SHADOW_OPACITY,
     GROUND,
     GROUND_OPACITY,
+    BACKDROP_OPACITY,
     HEIGHT,
     INNER_BRANCH_OPACITY,
     LIGHT,
@@ -52,30 +53,8 @@ function circlesPath(circles) {
         .join("");
 }
 
-/**
- * Draw the tree as SVG so the words can be hovered, clicked and zoomed as they are. Returns the group that zoom moves and
- * a map from each surname to its words (a name can appear many times, once big and then small to fill gaps).
- * Each word is a <g class="sutree-word" data-surname="..."> turned to its angle, holding an invisible box, which makes
- * tiny words easy to hit, and the text.
- */
-export function renderTreeSvg(svg, items, tree = buildTree(1)) {
-    svg.replaceChildren();
-    svg.setAttribute("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
-    svg.setAttribute("xmlns", NS);
-    svg.setAttribute("font-family", TREE_FONT);
-    svg.setAttribute("role", "group");
-    svg.setAttribute("aria-label", "A tree made of names");
-
-    const defs = svgElement("defs");
-    svg.appendChild(defs);
-    // Everything is clipped to the drawing's own frame. Without this, the part of the trunk's foot that is below the ground
-    // shows when the page gives the picture a taller box than its shape (the SVG then shows what lies outside its frame).
-    const frame = svgElement("clipPath", { id: "suTreeFrame" });
-    frame.appendChild(svgElement("rect", { x: 0, y: 0, width: WIDTH, height: HEIGHT }));
-    defs.appendChild(frame);
-    const viewport = svgElement("g", { "class": "sutree-viewport", "clip-path": "url(#suTreeFrame)" });
-    svg.appendChild(viewport);
-
+/** The oak with its shading: gradients, bark, a patch of ground and a shadow under the leaves. */
+function addShadedTree(defs, viewport, tree) {
     // trunk and limbs: shaded across from left to right
     const { left, right } = trunkSpan(tree);
     const bark = svgElement("linearGradient", {
@@ -188,6 +167,71 @@ export function renderTreeSvg(svg, items, tree = buildTree(1)) {
             "pointer-events": "none",
         })
     );
+}
+
+/** The oak in two flat tones, like a silhouette in word art: a solid crown over a solid trunk, nothing shaded. */
+function addFlatTree(viewport, tree) {
+    viewport.appendChild(
+        svgElement("path", {
+            class: "sutree-trunk",
+            fill: COLORS.trunkFlat,
+            d: circlesPath(tree.trunk),
+        })
+    );
+    viewport.appendChild(
+        svgElement("path", {
+            class: "sutree-crown",
+            fill: COLORS.crownFlat,
+            d: circlesPath(tree.crown),
+        })
+    );
+}
+
+/** A picture used as the shape, faintly behind the words, so the outline can be seen. */
+function addBackdrop(viewport, shape) {
+    if (!shape.picture) return;
+    const image = svgElement("image", {
+        "class": "sutree-backdrop",
+        "x": 0,
+        "y": 0,
+        "width": WIDTH,
+        "height": HEIGHT,
+        "opacity": BACKDROP_OPACITY,
+        "pointer-events": "none",
+    });
+    image.setAttribute("href", shape.picture);
+    viewport.appendChild(image);
+}
+
+/**
+ * Draw the tree as SVG so the words can be hovered, clicked and zoomed as they are. Returns the group that zoom moves and
+ * a map from each surname to its words (a name can appear many times, once big and then small to fill gaps).
+ * Each word is a <g class="sutree-word" data-surname="..."> turned to its angle, holding an invisible box, which makes
+ * tiny words easy to hit, and the text.
+ */
+export function renderTreeSvg(svg, items, tree = buildTree(1)) {
+    svg.replaceChildren();
+    svg.setAttribute("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
+    svg.setAttribute("xmlns", NS);
+    svg.setAttribute("font-family", TREE_FONT);
+    svg.setAttribute("role", "group");
+    svg.setAttribute("aria-label", "A tree made of names");
+
+    const defs = svgElement("defs");
+    svg.appendChild(defs);
+    // Everything is clipped to the drawing's own frame. Without this, the part of the trunk's foot that is below the ground
+    // shows when the page gives the picture a taller box than its shape (the SVG then shows what lies outside its frame).
+    const frame = svgElement("clipPath", { id: "suTreeFrame" });
+    frame.appendChild(svgElement("rect", { x: 0, y: 0, width: WIDTH, height: HEIGHT }));
+    defs.appendChild(frame);
+    const viewport = svgElement("g", { "class": "sutree-viewport", "clip-path": "url(#suTreeFrame)" });
+    svg.appendChild(viewport);
+
+    // What goes behind the words: the picture the member chose, or an oak, shaded or flat.
+    const look = tree.look || "shaded";
+    if (tree.kind === "image") addBackdrop(viewport, tree);
+    else if (look === "flat") addFlatTree(viewport, tree);
+    else addShadedTree(defs, viewport, tree);
 
     const words = new Map();
     items.forEach((item) => {
@@ -221,7 +265,7 @@ export function renderTreeSvg(svg, items, tree = buildTree(1)) {
             "font-weight": "bold",
             "text-anchor": "middle",
             "dominant-baseline": "central",
-            "fill": colorFor(item),
+            "fill": colorFor(item, look),
         });
         text.textContent = item.text;
         group.appendChild(text);

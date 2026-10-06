@@ -25,6 +25,20 @@ take away generations or degrees.
 adoptive family if every way of reaching them includes an adoptive link, which may not come back through the starting
 person. Marriages are neither, so they keep whichever kind the path already was.
 
+## The look, and your own picture
+
+**Look**: **Shaded** is the oak with gradients, bark, a shadow under the leaves and a patch of ground. **Flat two-tone** is
+the crisp silhouette style of word art: a solid pale-green crown over a solid tan trunk, nothing shaded, with the words
+packed tight and many more small ones filling the gaps. The look can be changed without loading anything again.
+
+**Shape**: **Oak tree** or **My picture**. Choose a picture (PNG, JPG, GIF, WebP or SVG, under 15 MB) and the words fill
+its silhouette, each taking the colour of the picture under it, with the picture faintly behind. The picture is read in your
+own browser and is not uploaded anywhere. A picture with transparent parts is cut out by its transparency; any other is cut
+out by its background, taken to be the colour along its edges. The **Cut-out** slider says how different from the
+background a colour must be to count as part of the shape: raise it to cut more away, lower it to keep more. Colours are
+made easy to read as text (never very light or very dark). If no shape can be found, the oak is shown and a note says so.
+Shuffle, the names, Reach, zoom, the list and the card, and saving all work in a picture's shape too.
+
 ## Options in the address
 
 The options can be given after the view, so a link opens the tree as set:
@@ -38,6 +52,7 @@ The options can be given after the view, so a link opens the tree as set:
 | `biological`  | `0` or `1`                                               | `1`         |
 | `adoptive`    | `0` or `1`                                               | `1`         |
 | `fill`        | `0` or `1` (repeat names in small type to fill the gaps) | `1`         |
+| `look`        | `shaded`, `flat`                                         | `shaded`    |
 
 For example: `#name=Example-42&view=surnametree&names=first&scope=cc7&degrees=5&adoptive=0`
 
@@ -51,6 +66,7 @@ For example: `#name=Example-42&view=surnametree&names=first&scope=cc7&degrees=5&
 | `surname_tree_data.js`   | The API calls (`WikiTreeAPI.getPeople`)                                                               |
 | `surname_tree_svg.js`    | The SVG drawing, and wheel and drag zoom                                                              |
 | `surname_tree_zoom.js`   | Zoom and pan arithmetic                                                                               |
+| `surname_tree_image.js`  | A picture as the shape: cutting out its silhouette, and the colour of each word                       |
 | `surname_tree_list.js`   | The HTML for the list and the card                                                                    |
 | `surname_tree_draw.js`   | Canvas drawing and text measuring (for pictures)                                                      |
 | `surname_tree_export.js` | File types, sizes, drawing at a size, and the PDF writer (no library; one JPEG on one page)           |
@@ -67,3 +83,14 @@ clump of leaves, with a branch off most of them. Ridges of bark run up the trunk
 `layoutWords()` places words largest first, each spiralling out until it fits wholly inside
 the crown or trunk and clear of the others, at any angle (the first few and the biggest stay level so they read easily).
 `renderTreeSvg()` draws it, with each clump of leaves lit at its upper left and shadowed at its lower right.
+
+## Tests
+
+The tests are in `tests/` at the top of this repository, and are only for development: the Tree Apps page uses nothing in
+that folder. They need Node.js.
+
+```
+cd tests
+npm install
+npm test
+```
