@@ -22,8 +22,9 @@ take away generations or degrees.
 **Show**: **Biological** and **Adoptive**, together or one at a time. WikiTree marks a parent as not the birth parent
 (adoptive, step or foster) with `DataStatus.Father` or `DataStatus.Mother` of 5, and names the birth parent in
 `BioFather` or `BioMother`. A person counts as biological family if they can be reached by birth links alone, and as
-adoptive family if every way of reaching them includes an adoptive link, which may not come back through the starting
-person. Marriages are neither, so they keep whichever kind the path already was.
+adoptive family if they can be reached by a path that includes at least one adoptive link (a path may not come back
+through the starting person). Someone who can be reached both ways counts as both, so they show whichever of the two is
+ticked. Marriages are neither, so they keep whichever kind the path already was.
 
 ## The look, and your own picture
 
