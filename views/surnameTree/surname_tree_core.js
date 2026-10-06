@@ -458,6 +458,93 @@ export function joinUp(circles) {
     return circles;
 }
 
+/**
+ * How lopsided a crown is about the vertical line `axis` (where the trunk stands): the difference between the leaf area of
+ * its two sides (0 is even, 1 is all on one side), how far the middle of its leaves is from the axis, how far the middle
+ * of its width is from the axis, and how much higher the leaves on one side sit than on the other. A real tree is not
+ * symmetrical, but it is balanced over its trunk.
+ */
+export function crownBalance(crown, axis = 500) {
+    let left = 0;
+    let right = 0;
+    let sumX = 0;
+    let leftY = 0;
+    let rightY = 0;
+    let lo = Infinity;
+    let hi = -Infinity;
+    crown.forEach((c) => {
+        const area = c.r * c.r;
+        sumX += c.x * area;
+        if (c.x < axis) {
+            left += area;
+            leftY += c.y * area;
+        } else {
+            right += area;
+            rightY += c.y * area;
+        }
+        lo = Math.min(lo, c.x - c.r);
+        hi = Math.max(hi, c.x + c.r);
+    });
+    const total = left + right || 1;
+    return {
+        mass: Math.abs(left - right) / total,
+        offset: Math.abs(sumX / total - axis),
+        reach: Math.abs((lo + hi) / 2 - axis),
+        height: Math.abs(leftY / (left || 1) - rightY / (right || 1)),
+    };
+}
+
+/** One number for how lopsided a crown is (0 is perfect): the measures of crownBalance, each against what would be noticed. */
+function lopsidedness(crown, axis) {
+    const { mass, offset, reach, height } = crownBalance(crown, axis);
+    return mass / 0.06 + offset / 12 + reach / 12 + height / 15;
+}
+
+/**
+ * Balance a crown over the line `axis`, in place: even out the leaf area of its two sides by growing the lighter side's
+ * clumps and shrinking the heavier side's, bring the two sides to the same height, and centre it on the axis. The outline
+ * stays uneven, but the tree does not lean or droop to one side. `settle` keeps the clumps in the picture and joined, in
+ * place. Each round is judged by how lopsided the crown then is, and the best one is kept.
+ */
+function balanceCrown(crown, axis, settle) {
+    const centre = () => {
+        // halfway between the middle of its width and the middle of its leaves, moving every clump the same way
+        const lo = Math.min(...crown.map((c) => c.x - c.r));
+        const hi = Math.max(...crown.map((c) => c.x + c.r));
+        const leaves = crown.reduce((sum, c) => sum + c.r * c.r, 0);
+        const middleOfLeaves = crown.reduce((sum, c) => sum + c.x * c.r * c.r, 0) / leaves;
+        const slide = axis - ((lo + hi) / 2 + middleOfLeaves) / 2;
+        crown.forEach((c) => (c.x += slide));
+    };
+    let best = { score: lopsidedness(crown, axis), state: crown.map((c) => ({ ...c })) };
+    for (let round = 0; round < 12; round++) {
+        const areas = [0, 0];
+        crown.forEach((c) => (areas[c.x < axis ? 0 : 1] += c.r * c.r));
+        const target = (areas[0] + areas[1]) / 2;
+        crown.forEach((c) => {
+            const grow = Math.sqrt(target / (areas[c.x < axis ? 0 : 1] || 1));
+            c.r *= 1 + 0.8 * (grow - 1);
+        });
+
+        const heights = [0, 0];
+        const weights = [0, 0];
+        crown.forEach((c) => {
+            const side = c.x < axis ? 0 : 1;
+            heights[side] += c.y * c.r * c.r;
+            weights[side] += c.r * c.r;
+        });
+        const gap = heights[0] / (weights[0] || 1) - heights[1] / (weights[1] || 1);
+        crown.forEach((c) => (c.y += (c.x < axis ? -gap : gap) * 0.45));
+
+        settle();
+        centre();
+        const score = lopsidedness(crown, axis);
+        if (score < best.score) best = { score, state: crown.map((c) => ({ ...c })) };
+        if (score < 1.2) break;
+    }
+    crown.forEach((c, i) => Object.assign(c, best.state[i]));
+}
+
 /** The lowest the leaves come, and the ground the trunk stands on. */
 const CROWN_BOTTOM = 650;
 export const GROUND = { x: 500, y: 878, rx: 400, ry: 30 };
@@ -467,7 +554,8 @@ export const GROUND = { x: 500, y: 878, rx: 400, ry: 30 };
  * leaning one way, with small bumps round its edge, all joined into one mass; a short, stout trunk that flares at the
  * base into roots spreading over the ground; and thick limbs forking from the top of the trunk, each running up into a
  * clump of leaves, with a branch off most of them that ends in the leaves too, so nothing hangs loose.
- * Returns { crown: [{ x, y, r, hue, light }], trunk: [{ x, y, r }], spine, tips, seed }, where spine is the trunk's own
+ * Returns { crown: [{ x, y, r, hue, light }], trunk: [{ x, y, r }], spine, tips, axis, seed }, where axis is the line the trunk
+ * stands on and the crown is balanced over, spine is the trunk's own
  * circles from the ground up (the limbs and roots follow them in trunk), and tips are the points where limbs and
  * branches end, inside the crown.
  */
@@ -475,10 +563,11 @@ export function buildTree(seed = 1) {
     const random = seededRandom((seed >>> 0) ^ 0x9e3779b9);
     const between = (lo, hi) => lo + random() * (hi - lo);
 
-    // ---- the crown
-    const lean = between(-1, 1); // which side droops
-    const widthLeft = between(0.94, 1.06);
-    const widthRight = between(0.94, 1.06);
+    // ---- the crown, built round the line the trunk stands on
+    const axis = 500 + between(-25, 25);
+    const lean = between(-1, 1); // a slight tilt, which side is a little lower
+    const widthLeft = between(0.95, 1.05);
+    const widthRight = between(0.95, 1.05);
     const fit = (c) => {
         const r = clamp(c.r, 18, 235);
         return { ...c, r, x: clamp(c.x, 8 + r, 992 - r), y: clamp(c.y, 8 + r, CROWN_BOTTOM - r) };
@@ -486,13 +575,14 @@ export function buildTree(seed = 1) {
     const body = CROWN_TEMPLATE.map(([x, y, r]) => {
         const spread = x < 500 ? widthLeft : widthRight;
         return fit({
-            x: 500 + (x - 500) * spread + between(-40, 40),
-            y: y + between(-36, 36) + lean * (x - 500) * 0.1,
-            r: r * between(0.8, 1.18),
+            core: true, // a main lobe of the crown (not a small bump on its edge)
+            x: axis + (x - 500) * spread + between(-28, 28),
+            y: y + between(-26, 26) + lean * (x - 500) * 0.03,
+            r: r * between(0.86, 1.14),
         });
     });
     // now and then a lobe is missing, so the outline is not the same each time
-    if (random() < 0.6) body.splice(1 + Math.floor(random() * 6), 1);
+    if (random() < 0.5) body.splice(1 + Math.floor(random() * 6), 1);
     // many small bumps of leaves round the outside, as in a real oak's crown
     const bumps = [];
     const bumpCount = 12 + Math.floor(random() * 9);
@@ -501,23 +591,40 @@ export function buildTree(seed = 1) {
         const angle = between(Math.PI * 0.9, Math.PI * 2.1); // the top and sides, not the underside
         bumps.push(
             fit({
+                core: false,
                 x: base.x + Math.cos(angle) * base.r * 0.9,
                 y: base.y + Math.sin(angle) * base.r * 0.9,
                 r: between(22, 54),
             })
         );
     }
-    let crown = body.concat(bumps).map((c) => ({ ...c, hue: between(100, 140), light: random() })); // each clump its own green
-    // pulled together into one mass (then kept inside the picture), so no clump floats apart
-    for (let pass = 0; pass < 3; pass++) crown = joinUp(crown).map(fit);
+    const crown = body.concat(bumps).map((c) => ({ ...c, hue: between(100, 140), light: random() })); // each clump its own green
+    // joined into one mass and kept inside the picture, so no clump floats apart (in place, so the crown stays the same list)
+    const settle = () => {
+        for (let pass = 0; pass < 3; pass++) {
+            joinUp(crown);
+            crown.forEach((c) => Object.assign(c, fit(c)));
+        }
+    };
+    settle();
+    // and balanced over the trunk: uneven in outline, but not leaning or drooping to one side
+    balanceCrown(crown, axis, settle);
     // drawn from the top down, so lower clumps overlap the ones above them
     crown.sort((a, b) => a.y + a.r - (b.y + b.r));
+    // the main lobes as they now are, after balancing (the limbs go to these)
+    const lobes = crown.filter((c) => c.core);
+
+    // the trunk stands under the middle of the crown as it has ended up: halfway between the middle of its width and of its leaves
+    const leafArea = crown.reduce((sum, c) => sum + c.r * c.r, 0);
+    const middleOfLeaves = crown.reduce((sum, c) => sum + c.x * c.r * c.r, 0) / leafArea;
+    const middleOfWidth = (Math.min(...crown.map((c) => c.x - c.r)) + Math.max(...crown.map((c) => c.x + c.r))) / 2;
+    const trunkAxis = (middleOfLeaves + middleOfWidth) / 2;
 
     // ---- the trunk: short, stout, widest at the ground
-    const lowest = Math.max(...body.map((c) => c.y + c.r));
-    const baseX = 500 + between(-40, 40);
+    const lowest = Math.max(...lobes.map((c) => c.y + c.r));
+    const baseX = trunkAxis + between(-14, 14);
     const base = [baseX, 872];
-    const fork = [baseX + between(-30, 30) + lean * 20, clamp(lowest - between(30, 100), 470, 610)];
+    const fork = [trunkAxis + between(-22, 22) + lean * 6, clamp(lowest - between(30, 100), 470, 610)];
     // the trunk divides inside the leaves; if that point fell in a gap, move it into the nearest clump
     if (!crown.some((c) => Math.hypot(fork[0] - c.x, fork[1] - c.y) < c.r - 10)) {
         const near = crown.reduce((a, b) =>
@@ -564,7 +671,7 @@ export function buildTree(seed = 1) {
 
     // ---- limbs that fork from the top of the trunk and end in clumps of leaves
     const tips = [];
-    const lower = body.filter((c) => c.y + c.r > lowest - 240).sort((a, b) => a.x - b.x);
+    const lower = lobes.filter((c) => c.y + c.r > lowest - 240).sort((a, b) => a.x - b.x);
     const limbCount = Math.min(lower.length, random() < 0.4 ? 4 : 3);
     const used = new Set();
     for (let i = 0; i < limbCount; i++) {
@@ -590,7 +697,7 @@ export function buildTree(seed = 1) {
         // a branch off most limbs, forking away and growing up into the leaves
         if (random() < 0.85) {
             const at = thisLimb[Math.floor(thisLimb.length * between(0.35, 0.7))];
-            const near = body.filter((c) => Math.hypot(c.x - at.x, c.y - at.y) < 360 && c !== target);
+            const near = lobes.filter((c) => Math.hypot(c.x - at.x, c.y - at.y) < 360 && c !== target);
             if (near.length) {
                 const goal = near[Math.floor(random() * near.length)];
                 const end = [goal.x + between(-0.35, 0.35) * goal.r, goal.y + between(-0.35, 0.35) * goal.r];
@@ -610,7 +717,7 @@ export function buildTree(seed = 1) {
             }
         }
     }
-    return { crown, trunk, spine, tips, seed };
+    return { crown, trunk, spine, tips, axis: trunkAxis, seed };
 }
 
 /**

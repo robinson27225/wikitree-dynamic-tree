@@ -68,7 +68,12 @@ export function renderTreeSvg(svg, items, tree = buildTree(1)) {
 
     const defs = svgElement("defs");
     svg.appendChild(defs);
-    const viewport = svgElement("g", { class: "sutree-viewport" });
+    // Everything is clipped to the drawing's own frame. Without this, the part of the trunk's foot that is below the ground
+    // shows when the page gives the picture a taller box than its shape (the SVG then shows what lies outside its frame).
+    const frame = svgElement("clipPath", { id: "suTreeFrame" });
+    frame.appendChild(svgElement("rect", { x: 0, y: 0, width: WIDTH, height: HEIGHT }));
+    defs.appendChild(frame);
+    const viewport = svgElement("g", { "class": "sutree-viewport", "clip-path": "url(#suTreeFrame)" });
     svg.appendChild(viewport);
 
     // trunk and limbs: shaded across from left to right
