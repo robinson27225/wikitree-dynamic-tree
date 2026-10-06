@@ -1,0 +1,14 @@
+{
+  "name": "wikitree-dynamic-tree-tests",
+  "private": true,
+  "description": "Tests for the Surname Tree view. They are only for development: the Tree Apps page does not use anything in this folder.",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@babel/preset-env": "^7.19.4",
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.3.0",
+    "jquery": "^3.7.1"
+  }
+}
