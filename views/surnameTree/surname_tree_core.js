@@ -545,13 +545,16 @@ function balanceCrown(crown, axis, settle) {
     crown.forEach((c, i) => Object.assign(c, best.state[i]));
 }
 
+/** No clump of leaves is smaller than this: small circles on the outline look like stray bubbles, not leaves. */
+const MIN_CLUMP = 85;
+
 /** The lowest the leaves come, and the ground the trunk stands on. */
 const CROWN_BOTTOM = 650;
 export const GROUND = { x: 500, y: 878, rx: 400, ry: 30 };
 
 /**
  * A tree that is different for each seed, like an oak: a broad, rounded crown of leafy lobes of uneven size and tint,
- * leaning one way, with small bumps round its edge, all joined into one mass; a short, stout trunk that flares at the
+ * all joined into one mass; a short, stout trunk that flares at the
  * base into roots spreading over the ground; and thick limbs forking from the top of the trunk, each running up into a
  * clump of leaves, with a branch off most of them that ends in the leaves too, so nothing hangs loose.
  * Returns { crown: [{ x, y, r, hue, light }], trunk: [{ x, y, r }], spine, tips, axis, seed }, where axis is the line the trunk
@@ -569,13 +572,12 @@ export function buildTree(seed = 1) {
     const widthLeft = between(0.95, 1.05);
     const widthRight = between(0.95, 1.05);
     const fit = (c) => {
-        const r = clamp(c.r, 18, 235);
+        const r = clamp(c.r, MIN_CLUMP, 235);
         return { ...c, r, x: clamp(c.x, 8 + r, 992 - r), y: clamp(c.y, 8 + r, CROWN_BOTTOM - r) };
     };
     const body = CROWN_TEMPLATE.map(([x, y, r]) => {
         const spread = x < 500 ? widthLeft : widthRight;
         return fit({
-            core: true, // a main lobe of the crown (not a small bump on its edge)
             x: axis + (x - 500) * spread + between(-28, 28),
             y: y + between(-26, 26) + lean * (x - 500) * 0.03,
             r: r * between(0.86, 1.14),
@@ -583,22 +585,7 @@ export function buildTree(seed = 1) {
     });
     // now and then a lobe is missing, so the outline is not the same each time
     if (random() < 0.5) body.splice(1 + Math.floor(random() * 6), 1);
-    // many small bumps of leaves round the outside, as in a real oak's crown
-    const bumps = [];
-    const bumpCount = 12 + Math.floor(random() * 9);
-    for (let i = 0; i < bumpCount; i++) {
-        const base = body[Math.floor(random() * body.length)];
-        const angle = between(Math.PI * 0.9, Math.PI * 2.1); // the top and sides, not the underside
-        bumps.push(
-            fit({
-                core: false,
-                x: base.x + Math.cos(angle) * base.r * 0.9,
-                y: base.y + Math.sin(angle) * base.r * 0.9,
-                r: between(22, 54),
-            })
-        );
-    }
-    const crown = body.concat(bumps).map((c) => ({ ...c, hue: between(100, 140), light: random() })); // each clump its own green
+    const crown = body.map((c) => ({ ...c, hue: between(100, 140), light: random() })); // each clump its own green
     // joined into one mass and kept inside the picture, so no clump floats apart (in place, so the crown stays the same list)
     const settle = () => {
         for (let pass = 0; pass < 3; pass++) {
@@ -611,8 +598,8 @@ export function buildTree(seed = 1) {
     balanceCrown(crown, axis, settle);
     // drawn from the top down, so lower clumps overlap the ones above them
     crown.sort((a, b) => a.y + a.r - (b.y + b.r));
-    // the main lobes as they now are, after balancing (the limbs go to these)
-    const lobes = crown.filter((c) => c.core);
+    // the lobes as they now are, after balancing (the limbs go to these)
+    const lobes = crown;
 
     // the trunk stands under the middle of the crown as it has ended up: halfway between the middle of its width and of its leaves
     const leafArea = crown.reduce((sum, c) => sum + c.r * c.r, 0);
