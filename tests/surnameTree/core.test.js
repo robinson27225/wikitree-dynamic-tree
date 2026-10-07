@@ -22,6 +22,10 @@ import {
     searchQuery,
     groupQuery,
     unseenNote,
+    BANNER_FONTS,
+    BANNER_FRAME,
+    buildBannerShape,
+    frameOf,
     unseenRows,
     crownColors,
     chooseByRelation,
@@ -1037,5 +1041,59 @@ describe("the note about names that did not fit", () => {
             ],
             more: 1,
         });
+    });
+});
+
+describe("the wide banner", () => {
+    const words = Array.from({ length: 40 }, (_, i) => ({ text: `NAME${i}${"X".repeat(i % 5)}`, count: 40 - i }));
+
+    it("is as wide as the tree and the shape of a 2560 x 400 picture", () => {
+        const banner = buildBannerShape();
+        expect(frameOf(banner)).toBe(BANNER_FRAME);
+        expect(BANNER_FRAME.w).toBe(WIDTH);
+        expect(BANNER_FRAME.w / BANNER_FRAME.h).toBeCloseTo(2560 / 400, 5);
+        expect(frameOf(buildTree(1))).toEqual({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
+        expect(frameOf(null)).toEqual({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
+    });
+
+    it("has every cell for words, and no trunk", () => {
+        const { masks } = buildBannerShape();
+        expect(masks.crown.every((cell) => cell === 1)).toBe(true);
+        expect(masks.trunk.every((cell) => cell === 0)).toBe(true);
+        expect(masks.rows * CELL).toBeGreaterThanOrEqual(BANNER_FRAME.h);
+        expect(masks.rows * CELL).toBeLessThan(BANNER_FRAME.h + CELL);
+    });
+
+    it("keeps the colours it was given", () => {
+        const banner = buildBannerShape({ background: "#102030", wordColor: "#aabbcc" });
+        expect(banner).toMatchObject({ kind: "banner", background: "#102030", wordColor: "#aabbcc", look: "outlined" });
+    });
+
+    it("fills the banner with words, smaller than the tree's, inside the frame and apart from each other", () => {
+        const { masks } = buildBannerShape();
+        const items = layoutWords({
+            words,
+            measure,
+            random: seededRandom(4),
+            masks,
+            look: "flat",
+            fonts: BANNER_FONTS,
+        });
+        expect(items.length).toBeGreaterThan(40);
+        expect(Math.max(...items.map((i) => i.size))).toBeLessThanOrEqual(BANNER_FONTS.maxFont);
+        const seen = new Set();
+        items.forEach((item) => {
+            expect(item.region).toBe("crown");
+            expect(item.y).toBeLessThan(BANNER_FRAME.h + CELL);
+            wordCells(item).forEach(([col, row]) => {
+                const id = `${col},${row}`;
+                expect(seen.has(id)).toBe(false);
+                seen.add(id);
+                expect(masks.crown[row * masks.cols + col]).toBeTruthy();
+            });
+        });
+        // the whole width is used, not only the middle
+        expect(Math.min(...items.map((i) => i.x))).toBeLessThan(200);
+        expect(Math.max(...items.map((i) => i.x))).toBeGreaterThan(800);
     });
 });
