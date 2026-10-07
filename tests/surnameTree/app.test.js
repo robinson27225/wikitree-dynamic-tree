@@ -3,6 +3,7 @@ import { Buffer } from "buffer";
 jest.mock("../../views/surnameTree/surname_tree_image.js", () => ({
     ...jest.requireActual("../../views/surnameTree/surname_tree_image.js"),
     readImageFile: (...args) => global.mockReadImage(...args),
+    readImageUrl: (...args) => global.mockReadImageUrl(...args),
     backdropDataUrl: () => "data:image/png;base64,AAAA",
 }));
 // the Tree Apps page provides jQuery and WikiTreeAPI as globals
@@ -16,7 +17,13 @@ const settle = async () => {
 };
 
 const APP = "../../views/surnameTree/surname_tree_app.js";
-const START = { scope: "ancestors", generations: 6, degrees: 7, fillGaps: false };
+const START = {
+    scope: "ancestors",
+    generations: 6,
+    degrees: 7,
+    fillGaps: false,
+    imagesUrl: "https://example.test/views/surnameTree/",
+};
 let mounted = null; // the app now on the page
 
 /** Put the page's view area on the page, with a fresh copy of the app. */
@@ -106,8 +113,8 @@ beforeAll(() => {
                 name === "measureText"
                     ? () => ({ width: 10 })
                     : /^create.*Gradient$/.test(String(name))
-                    ? () => gradient
-                    : () => {},
+                      ? () => gradient
+                      : () => {},
         }
     );
     window.HTMLCanvasElement.prototype.getContext = () => g;
@@ -131,6 +138,7 @@ beforeAll(() => {
 
 beforeEach(() => {
     global.mockReadImage = jest.fn(() => Promise.resolve(pictureOf([30, 140, 40])));
+    global.mockReadImageUrl = jest.fn(() => Promise.resolve(pictureOf([240, 150, 20])));
     global.mockBlobs = [];
     global.mockPdfs = [];
     global.mockCanvasFails = false;
@@ -481,7 +489,7 @@ describe("Surname Tree", () => {
             await change('input[name="suTreeFormat"][value="pdf"]', true);
             await click("#suTreeSaveGo");
             HTMLAnchorElement.prototype.click = original;
-            expect(saved).toEqual(["first-name-tree-Robinson-1-1600px.png", "first-name-tree-Robinson-1.pdf"]);
+            expect(saved).toEqual(["first-name-tree-Robinson-1-800px.png", "first-name-tree-Robinson-1.pdf"]);
             expect(global.mockPdfs[0]).toContain("First Name Tree of Person 1 Robinson");
         });
     });
@@ -491,7 +499,7 @@ describe("Surname Tree", () => {
             global.mockOptions = { ...START, fillGaps: true };
             await open();
             const look = document.getElementById("suTreeLook");
-            expect([...look.options].map((o) => o.value)).toEqual(["shaded", "flat"]);
+            expect([...look.options].map((o) => o.value)).toEqual(["shaded", "flat", "outlined"]);
             expect(look.value).toBe("shaded");
             expect(document.querySelector(".sutree-ground")).not.toBeNull();
             const shadedWords = words().length;
@@ -508,6 +516,17 @@ describe("Surname Tree", () => {
             expect(global.mockGetPeople.mock.calls.length).toBe(calls);
             await change("#suTreeLook", "shaded");
             expect(document.querySelector(".sutree-ground")).not.toBeNull();
+        });
+
+        it("draws the outlined look with a dark outline round each puff of leaves and the trunk", async () => {
+            await open();
+            await change("#suTreeLook", "outlined");
+            expect(document.querySelector(".sutree-trunk-outline")).not.toBeNull();
+            const puffs = document.querySelectorAll(".sutree-crown");
+            expect(puffs.length).toBeGreaterThan(3);
+            puffs.forEach((p) => expect(p.getAttribute("stroke")).toBe("#27481f"));
+            expect(document.querySelector(".sutree-ground")).toBeNull();
+            expect(words().length).toBeGreaterThan(0);
         });
 
         it("starts on flat when the options say so", async () => {
@@ -527,7 +546,17 @@ describe("Surname Tree", () => {
             await open();
             expect([...document.getElementById("suTreeShapeKind").options].map((o) => o.value)).toEqual([
                 "tree",
+                "wikitree-logo",
+                "wikitree-heart",
+                "oak-picture",
                 "image",
+            ]);
+            expect([...document.getElementById("suTreeShapeKind").options].map((o) => o.textContent)).toEqual([
+                "Oak tree (drawn)",
+                "WikiTree logo",
+                "WikiTree heart",
+                "Oak tree (picture)",
+                "My picture",
             ]);
             expect(chosenShape()).toBe("tree");
             expect(document.getElementById("suTreeChoose").hidden).toBe(true);
@@ -565,6 +594,73 @@ describe("Surname Tree", () => {
                 const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
                 expect(g).toBeGreaterThan(r);
                 expect(g).toBeGreaterThan(b);
+            });
+        });
+
+        describe("pictures that come with it", () => {
+            it("loads one from the view's own folder, fills its shape, and shows the picture behind", async () => {
+                await open();
+                await change("#suTreeShapeKind", "wikitree-logo");
+                expect(global.mockReadImageUrl).toHaveBeenCalledTimes(1);
+                expect(global.mockReadImageUrl).toHaveBeenCalledWith(
+                    "https://example.test/views/surnameTree/images/wikitree-logo.png"
+                );
+                expect(global.mockReadImage).not.toHaveBeenCalled(); // not the file reader
+                expect(document.getElementById("suTreeShapeKind").value).toBe("wikitree-logo");
+                expect(document.querySelector(".sutree-backdrop")).not.toBeNull();
+                expect(document.querySelector(".sutree-trunk")).toBeNull();
+                expect(words().length).toBeGreaterThan(20);
+                // there is nothing to choose, so no Choose picture button; the cut-out and white controls are there
+                expect(document.getElementById("suTreeChoose").hidden).toBe(true);
+                expect(document.getElementById("suTreeSenseLabel").hidden).toBe(false);
+                expect(document.getElementById("suTreeWhiteLabel").hidden).toBe(false);
+            });
+
+            it("leaves the white of the logo and the heart empty, and the oak picture's not", async () => {
+                await open();
+                await change("#suTreeShapeKind", "wikitree-logo");
+                expect(document.getElementById("suTreeWhite").checked).toBe(true);
+                await change("#suTreeShapeKind", "wikitree-heart");
+                expect(document.getElementById("suTreeWhite").checked).toBe(true);
+                await change("#suTreeShapeKind", "oak-picture");
+                expect(document.getElementById("suTreeWhite").checked).toBe(false);
+                expect(global.mockReadImageUrl.mock.calls.map((c) => c[0].split("/").pop())).toEqual([
+                    "wikitree-logo.png",
+                    "wikitree-heart.png",
+                    "oak-tree.jpg",
+                ]);
+            });
+
+            it("draws again when white is left empty or filled, without loading the picture again", async () => {
+                await open();
+                await change("#suTreeShapeKind", "wikitree-logo");
+                const before = document.querySelector(".sutree-word");
+                await change("#suTreeWhite", false);
+                expect(document.querySelector(".sutree-word")).not.toBe(before);
+                expect(global.mockReadImageUrl).toHaveBeenCalledTimes(1);
+            });
+
+            it("keeps a picture once loaded, and keeps the member's own picture while a built-in one is used", async () => {
+                await open();
+                await change("#suTreeShapeKind", "image");
+                await chooseFile("mine.png");
+                await change("#suTreeShapeKind", "wikitree-heart");
+                await change("#suTreeShapeKind", "image");
+                expect(global.mockReadImage).toHaveBeenCalledTimes(1); // mine is not read again
+                expect(document.getElementById("suTreeChoose").hidden).toBe(false);
+                expect(document.getElementById("suTreeChoose").title).toMatch(/mine\.png/);
+                expect(document.getElementById("suTreeWhite").checked).toBe(false);
+                await change("#suTreeShapeKind", "wikitree-heart");
+                expect(global.mockReadImageUrl).toHaveBeenCalledTimes(1); // nor the heart
+            });
+
+            it("says so and stays on what was showing when a picture will not load", async () => {
+                global.mockReadImageUrl = jest.fn(() => Promise.reject(new Error("That picture could not be opened.")));
+                await open();
+                await change("#suTreeShapeKind", "wikitree-logo");
+                expect(status()).toMatch(/could not be opened/);
+                expect(document.getElementById("suTreeShapeKind").value).toBe("tree");
+                expect(document.querySelector(".sutree-trunk")).not.toBeNull();
             });
         });
 
@@ -673,7 +769,7 @@ describe("Surname Tree", () => {
             await change('input[name="suTreeFormat"][value="pdf"]', true);
             await click("#suTreeSaveGo");
             HTMLAnchorElement.prototype.click = original;
-            expect(saved).toEqual(["surname-tree-Robinson-1-1600px.png", "surname-tree-Robinson-1.pdf"]);
+            expect(saved).toEqual(["surname-tree-Robinson-1-800px.png", "surname-tree-Robinson-1.pdf"]);
             expect(global.mockBlobs.length).toBeGreaterThan(0);
         });
     });
@@ -742,10 +838,8 @@ describe("Surname Tree", () => {
             ]);
             const size = document.getElementById("suTreeSize");
             expect([...size.options].map((o) => o.value)).toEqual(["small", "medium", "large", "custom"]);
-            expect(size.value).toBe("medium");
-            expect(document.getElementById("suTreeSizeNote").textContent).toBe(
-                "The picture will be 1,600 × 1,408 pixels."
-            );
+            expect(size.value).toBe("small");
+            expect(document.getElementById("suTreeSizeNote").textContent).toBe("The picture will be 800 × 704 pixels.");
             await click("#suTreeSaveCancel");
             expect(panel.hidden).toBe(true);
         });
@@ -755,8 +849,8 @@ describe("Surname Tree", () => {
             const { saved, restore } = saveClicks();
             await click("#suTreeSaveAs");
             await click("#suTreeSaveGo");
-            expect(saved).toEqual(["surname-tree-Robinson-1-1600px.png"]);
-            expect(global.mockBlobs.pop()).toMatchObject({ type: "image/png", width: 1600, height: 1408 });
+            expect(saved).toEqual(["surname-tree-Robinson-1-800px.png"]);
+            expect(global.mockBlobs.pop()).toMatchObject({ type: "image/png", width: 800, height: 704 });
             await click("#suTreeSaveAs");
             await change('input[name="suTreeFormat"][value="jpg"]', true);
             await change("#suTreeSize", "large");

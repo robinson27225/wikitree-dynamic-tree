@@ -12,6 +12,7 @@ import {
     MARGIN,
     MAX_FILE_BYTES,
     MIN_COVERAGE,
+    BUILT_IN_PICTURES,
     fileProblem,
     legibleColour,
     placeInFrame,
@@ -62,12 +63,12 @@ describe("cutting a shape out of a picture", () => {
         const expected = (Math.PI * 300 * 300) / (WIDTH * HEIGHT);
         expect(shape.coverage).toBeGreaterThan(expected * 0.95);
         expect(shape.coverage).toBeLessThan(expected * 1.05);
-        expect(shape.background).toEqual([255, 255, 255]);
+        expect(shape.background).toEqual([[255, 255, 255]]);
     });
 
     it("uses a background of any colour, found along the picture's edge", () => {
         const shape = shapeFromPixels(picture([20, 30, 80], disc(500, 440, 250, [250, 200, 60])), FRAME);
-        expect(shape.background).toEqual([20, 30, 80]);
+        expect(shape.background).toEqual([[20, 30, 80]]);
         expect(cellOf(shape, 500, 440)).toBe(1);
         expect(cellOf(shape, 30, 30)).toBe(0);
     });
@@ -88,7 +89,7 @@ describe("cutting a shape out of a picture", () => {
             disc(400, 350, 150, [10, 100, 200])(set);
         });
         const shape = shapeFromPixels(pixels, rect);
-        expect(shape.background).toEqual([255, 255, 255]); // its own white, not the transparent frame round it
+        expect(shape.background).toEqual([[255, 255, 255]]); // its own white, not the transparent frame round it
         expect(cellOf(shape, 400, 350)).toBe(1);
         expect(cellOf(shape, 150, 150)).toBe(0);
         expect(cellOf(shape, 900, 800)).toBe(0);
@@ -125,6 +126,60 @@ describe("cutting a shape out of a picture", () => {
         expect(cellOf(withDust, 500, 440)).toBe(1);
         const onlyBits = shapeFromPixels(picture([255, 255, 255], disc(500, 440, 8, [0, 0, 0])), FRAME);
         expect(onlyBits.coverage).toBeGreaterThan(0);
+    });
+
+    it("sees through a checkerboard of two greys, as in a picture saved with its transparent background showing", () => {
+        // squares of white and light grey, 8 pixels across, with a green disc on top; the colours drift a little, as in a JPEG
+        const board = picture([255, 255, 255], (set) => {
+            for (let y = 0; y < HEIGHT; y++) {
+                for (let x = 0; x < WIDTH; x++) {
+                    const grey = ((x >> 3) + (y >> 3)) % 2 ? 204 : 255;
+                    const drift = (x * 7 + y * 13) % 5;
+                    set(x, y, [grey - drift, grey - drift, grey - drift]);
+                }
+            }
+            disc(500, 440, 280, [30, 140, 40])(set);
+        });
+        const shape = shapeFromPixels(board, FRAME);
+        expect(shape.background.length).toBe(2);
+        expect(cellOf(shape, 500, 440)).toBe(1);
+        expect(cellOf(shape, 40, 40)).toBe(0); // neither the white nor the grey squares are part of the shape
+        expect(cellOf(shape, 44, 52)).toBe(0);
+        const expected = (Math.PI * 280 * 280) / (WIDTH * HEIGHT);
+        expect(shape.coverage).toBeLessThan(expected * 1.1);
+    });
+
+    it("keeps a plain background to one colour even when the edge has a little of something else", () => {
+        const shape = shapeFromPixels(picture([240, 240, 240], disc(500, 440, 250, [10, 120, 20])), FRAME);
+        expect(shape.background).toEqual([[240, 240, 240]]);
+    });
+
+    it("can leave the white parts inside a picture empty, so a white design on a colour shows as a gap", () => {
+        // an orange disc with a white tree-like cross in it, on a transparent background
+        const logo = picture(null, (set) => {
+            disc(500, 440, 340, [240, 150, 20])(set);
+            for (let y = 200; y < 700; y++) for (let x = 470; x < 530; x++) set(x, y, [255, 255, 255]);
+            for (let y = 380; y < 440; y++) for (let x = 300; x < 700; x++) set(x, y, [255, 255, 255]);
+        });
+        const filled = shapeFromPixels(logo, FRAME);
+        const withGaps = shapeFromPixels(logo, FRAME, DEFAULT_SENSITIVITY, { leaveWhite: true });
+        expect(cellOf(filled, 500, 300)).toBe(1); // the white design is part of the shape
+        expect(cellOf(withGaps, 500, 300)).toBe(0); // now a gap
+        expect(cellOf(withGaps, 400, 600)).toBe(1); // the orange is still there
+        expect(withGaps.coverage).toBeLessThan(filled.coverage);
+    });
+
+    it("comes with the WikiTree logo, the WikiTree heart and an oak picture", () => {
+        expect(BUILT_IN_PICTURES.map((p) => p.id)).toEqual(["wikitree-logo", "wikitree-heart", "oak-picture"]);
+        BUILT_IN_PICTURES.forEach((p) => {
+            expect(p.file).toMatch(/^images\/.+\.(png|jpg)$/);
+            expect(p.name.length).toBeGreaterThan(3);
+        });
+        // white inside the logo and the heart is a design to leave empty; the oak has none
+        expect(BUILT_IN_PICTURES.filter((p) => p.leaveWhite).map((p) => p.id)).toEqual([
+            "wikitree-logo",
+            "wikitree-heart",
+        ]);
     });
 
     it("finds no shape in a picture that is all one colour", () => {

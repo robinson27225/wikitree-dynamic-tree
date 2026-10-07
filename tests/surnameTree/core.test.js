@@ -792,7 +792,7 @@ describe("showing people", () => {
     });
 });
 
-describe("looks: shaded and flat", () => {
+describe("looks: shaded, flat and outlined", () => {
     const words = Array.from({ length: 30 }, (_, i) => ({
         text: `NAME${String.fromCharCode(65 + (i % 26))}${i}`,
         count: 30 - i,
@@ -800,9 +800,10 @@ describe("looks: shaded and flat", () => {
     const masks = buildMasks(buildTree(7));
     const run = (look) => layoutWords({ words, measure, random: seededRandom(5), masks, look });
 
-    it("offers shaded and flat, and falls back to shaded", () => {
-        expect(LOOKS.map((l) => l.id)).toEqual(["shaded", "flat"]);
+    it("offers shaded, flat and outlined, and falls back to shaded", () => {
+        expect(LOOKS.map((l) => l.id)).toEqual(["shaded", "flat", "outlined"]);
         expect(lookById("flat").name).toBe("Flat two-tone");
+        expect(lookById("outlined").name).toBe("Outlined");
         expect(lookById("nonsense").id).toBe("shaded");
     });
 
@@ -849,6 +850,49 @@ describe("looks: shaded and flat", () => {
         expect(colorFor({ ...item, x: 1, y: 1, color: "#123456" })).toBe("#123456");
         expect(COLORS.crownFlat).toMatch(/^#[0-9a-f]{6}$/);
         expect(COLORS.trunkFlat).toMatch(/^#[0-9a-f]{6}$/);
+    });
+});
+
+describe("the outlined look and the leader and limbs of the tree", () => {
+    it("packs between the shaded and flat looks and keeps every word inside the tree", () => {
+        const words = Array.from({ length: 30 }, (_, i) => ({ text: `NAME${i}`, count: 30 - i }));
+        const masks = buildMasks(buildTree(7));
+        const items = layoutWords({ words, measure, random: seededRandom(5), masks, look: "outlined" });
+        expect(items.length).toBeGreaterThan(30);
+        expect(lookById("outlined").gapCells).toBeLessThan(lookById("shaded").gapCells);
+        const seen = new Set();
+        items.forEach((item) =>
+            wordCells(item).forEach(([col, row]) => {
+                const id = `${col},${row}`;
+                expect(seen.has(id)).toBe(false);
+                seen.add(id);
+                const mask = item.region === "crown" ? masks.crown : masks.trunk;
+                expect(mask[row * masks.cols + col]).toBeTruthy();
+            })
+        );
+    });
+
+    it("colours words from the palette, not by position, and lets a word keep its own colour", () => {
+        const item = { text: "SMITH", rank: 2, region: "crown", size: 20, angle: 0 };
+        expect(colorFor({ ...item, x: 150, y: 120 }, "outlined")).toBe(
+            colorFor({ ...item, x: 850, y: 520 }, "outlined")
+        );
+        expect(colorFor({ ...item, x: 1, y: 1, color: "#123456" }, "outlined")).toBe("#123456");
+        expect(COLORS.outline).toMatch(/^#[0-9a-f]{6}$/);
+    });
+
+    it("grows one leader up from the trunk, with limbs reaching out to alternate sides", () => {
+        for (let seed = 1; seed <= 200; seed++) {
+            const tree = buildTree(seed);
+            expect(tree.leaderTop.y).toBeLessThan(tree.limbs[0].start.y);
+            expect(tree.limbs.length).toBeGreaterThan(1);
+            tree.limbs.forEach((limb) => {
+                expect(limb.side === -1 || limb.side === 1).toBe(true);
+                expect(Number.isFinite(limb.tip.x + limb.tip.y + limb.start.x + limb.start.y)).toBe(true);
+            });
+            const sides = new Set(tree.limbs.map((l) => l.side));
+            expect(sides.size).toBe(2);
+        }
     });
 });
 
