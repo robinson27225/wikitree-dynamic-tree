@@ -17,6 +17,7 @@ import {
     layoutWords,
     scopeById,
     groupQuery,
+    unseenNote,
     seededRandom,
 } from "./surname_tree_core.js";
 import { fetchScope } from "./surname_tree_data.js";
@@ -53,6 +54,9 @@ import { attachZoom, renderTreeSvg } from "./surname_tree_svg.js";
 // The Surname Tree app itself: a chart drawn in a container, with its controls, list and card. mountApp is given the
 // container, the person to start from (their number or WikiTree ID) and the starting options.
 
+/** How many of the names that found no room are told in the note under the tree (the rest are in its tooltip, up to UNSEEN_TITLE). */
+const UNSEEN_LISTED = 12;
+const UNSEEN_TITLE = 300;
 const pluralize = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
 // ---------------------------------------------------------------------------------------------
@@ -245,7 +249,8 @@ export function mountApp(container, key, options) {
     const zoom = attachZoom(svg);
     let wordGroups = new Map();
 
-    const say = (text, isError = false) => find("#suTreeStatus").text(text).toggleClass("sutree-error", isError);
+    const say = (text, isError = false) =>
+        find("#suTreeStatus").text(text).removeAttr("title").toggleClass("sutree-error", isError);
     const actionButtons = "#suTreeCopy, #suTreeSaveAs, #suTreeShuffle, #suTreeZoomIn, #suTreeZoomOut, #suTreeZoomReset";
     const wordFor = (text) => state.words.find((w) => w.text === text);
 
@@ -363,16 +368,16 @@ export function mountApp(container, key, options) {
             (scope.group
                 ? `(${scope.name}: ${state.query}).`
                 : `(${scope.name}, ${state.amount[scope.id]} ${scope.units}, ${typesText()}).`);
-        const unseen =
-            shown < state.words.length
-                ? ` ${(state.words.length - shown).toLocaleString()} rarer ${kind.nouns} did not fit.`
-                : "";
+        // the names that found no room are told: the first few in the note, and more when the pointer rests on it
+        const left = state.words.filter((w) => !wordGroups.has(w.text)).map((w) => w.text);
+        const unseenText = unseenNote(left, kind.noun, kind.nouns, UNSEEN_LISTED);
         const cut = state.raw.truncated
             ? ` Only the first ${(state.raw.limit || 60000).toLocaleString()} people were read.`
             : "";
         say(
-            `${state.caption}${unseen}${cut}${state.shapeNote} Hover a ${kind.noun} to see how many profiles it has, and click it to list them.`
+            `${state.caption}${unseenText}${cut}${state.shapeNote} Hover a ${kind.noun} to see how many profiles it has, and click it to list them.`
         );
+        if (left.length > UNSEEN_LISTED) find("#suTreeStatus").attr("title", left.slice(0, UNSEEN_TITLE).join(", "));
         if (state.selected) {
             if (wordFor(state.selected)) openList(state.selected, state.listShown);
             else closeList();
