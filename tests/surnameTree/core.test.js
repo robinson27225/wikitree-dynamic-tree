@@ -19,6 +19,7 @@ import {
     crownBalance,
     colorFor,
     unseenNote,
+    unseenRows,
     crownColors,
     chooseByRelation,
     countSurnames,
@@ -968,16 +969,40 @@ describe("the note about names that did not fit", () => {
         expect(unseenNote(["BOSWELL"], "surname", "surnames")).toBe(" 1 rarer surname did not fit: BOSWELL.");
     });
 
-    it("names the first few of several and says how many more", () => {
-        const names = Array.from({ length: 30 }, (_, i) => `N${i}`);
-        const note = unseenNote(names, "surname", "surnames", 3);
-        expect(note).toBe(" 30 rarer surnames did not fit: N0, N1, N2, and 27 more.");
-        expect(unseenNote(names.slice(0, 3), "first name", "first names", 3)).toBe(
-            " 3 rarer first names did not fit: N0, N1, N2."
+    it("names up to a few, and only counts more than that, for the popup list to name", () => {
+        expect(unseenNote(["A", "B", "C"], "first name", "first names")).toBe(
+            " 3 rarer first names did not fit: A, B, C."
         );
+        const names = Array.from({ length: 30 }, (_, i) => `N${i}`);
+        expect(unseenNote(names, "surname", "surnames")).toBe(" 30 rarer surnames did not fit.");
+        expect(unseenNote(names.slice(0, 5), "surname", "surnames", 5)).toMatch(/: N0, N1, N2, N3, N4\.$/);
     });
 
     it("says nothing when every name fitted", () => {
         expect(unseenNote([], "surname", "surnames")).toBe("");
+    });
+
+    it("lists the names left out with their counts, most common first, and says how many were cut off the end", () => {
+        const words = [
+            { text: "A", count: 9 },
+            { text: "B", count: 5 },
+            { text: "C", count: 2 },
+            { text: "D", count: 1 },
+        ];
+        expect(unseenRows(words, ["D", "B", "C"])).toEqual({
+            rows: [
+                { text: "B", count: 5 },
+                { text: "C", count: 2 },
+                { text: "D", count: 1 },
+            ],
+            more: 0,
+        });
+        expect(unseenRows(words, ["B", "C", "D"], 2)).toEqual({
+            rows: [
+                { text: "B", count: 5 },
+                { text: "C", count: 2 },
+            ],
+            more: 1,
+        });
     });
 });

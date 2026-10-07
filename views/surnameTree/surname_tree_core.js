@@ -1224,13 +1224,18 @@ export function colorFor(item, look = "shaded") {
 }
 
 /**
- * The note about the names that found no room: " 1 rarer surname did not fit: BOSWELL." or " 30 rarer surnames did not fit:
- * A, B, C, and 27 more." The first `listed` are named. "" when none were left out.
+ * The note about the names that found no room: " 1 rarer surname did not fit: BOSWELL." for a few, and " 30 rarer surnames did
+ * not fit." for more than `listed`, where the page offers the whole list (see unseenRows). "" when none were left out.
  */
-export function unseenNote(names, noun, nouns, listed = 12) {
+export function unseenNote(names, noun, nouns, listed = 3) {
     if (!names.length) return "";
-    const more = names.length > listed ? `, and ${(names.length - listed).toLocaleString()} more` : "";
-    return ` ${names.length.toLocaleString()} rarer ${names.length === 1 ? noun : nouns} did not fit: ${names
-        .slice(0, listed)
-        .join(", ")}${more}.`;
+    const count = `${names.length.toLocaleString()} rarer ${names.length === 1 ? noun : nouns} did not fit`;
+    return names.length > listed ? ` ${count}.` : ` ${count}: ${names.join(", ")}.`;
+}
+
+/** The list of names that did not fit, most common first: [{ text, count }], at most `limit`, and how many were left off the end. */
+export function unseenRows(words, left, limit = 500) {
+    const out = new Set(left);
+    const rows = words.filter((w) => out.has(w.text)).map((w) => ({ text: w.text, count: w.count }));
+    return { rows: rows.slice(0, limit), more: Math.max(0, rows.length - limit) };
 }

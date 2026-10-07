@@ -157,15 +157,15 @@ beforeEach(() => {
 });
 
 /** A made-up picture read from a file: a disc of one colour on a plain background (or all one colour if disc is false). */
-function pictureOf(rgb, { disc = true } = {}) {
+function pictureOf(rgb, { disc = true, radius = 300 } = {}) {
     const W = 1000;
     const H = 880;
     const data = new Uint8ClampedArray(W * H * 4);
     for (let i = 0; i < W * H; i++) data.set([255, 255, 255, 255], i * 4);
     if (disc) {
-        for (let y = 140; y < 740; y++) {
-            for (let x = 200; x < 800; x++)
-                if ((x - 500) ** 2 + (y - 440) ** 2 <= 300 * 300) data.set([...rgb, 255], (y * W + x) * 4);
+        for (let y = 440 - radius; y < 440 + radius; y++) {
+            for (let x = 500 - radius; x < 500 + radius; x++)
+                if ((x - 500) ** 2 + (y - 440) ** 2 <= radius * radius) data.set([...rgb, 255], (y * W + x) * 4);
         }
     }
     return { pixels: { width: W, height: H, data }, rect: { x: 0, y: 0, w: W, h: H } };
@@ -491,6 +491,63 @@ describe("Surname Tree", () => {
             HTMLAnchorElement.prototype.click = original;
             expect(saved).toEqual(["first-name-tree-Robinson-1-800px.png", "first-name-tree-Robinson-1.pdf"]);
             expect(global.mockPdfs[0]).toContain("First Name Tree of Person 1 Robinson");
+        });
+    });
+
+    describe("names that did not fit", () => {
+        // five generations of ancestors with a surname each, in a small shape: there is room for only some of the names
+        const smallShape = async () => {
+            global.mockTree = {};
+            for (let id = 1; id < 64; id++) {
+                const parents = id < 32 ? { Father: id * 2, Mother: id * 2 + 1 } : {};
+                const surname = `Family${String.fromCharCode(97 + (id % 26))}${"x".repeat(id % 7)}${id}`;
+                global.mockTree[id] = { ...person(id, surname, parents), Spouses: {} };
+            }
+            global.mockOptions = { ...START, generations: 5, fillGaps: false };
+            global.mockReadImage = jest.fn(() => Promise.resolve(pictureOf([30, 140, 40], { radius: 80 })));
+            await open();
+            await change("#suTreeShapeKind", "image");
+            await chooseFile("small.png");
+        };
+
+        it("names a few of them in the note, and for more offers a list with how many profiles each has", async () => {
+            await smallShape();
+            const left = (status().match(/(\d+) rarer surnames? did not fit/) || [])[1];
+            expect(Number(left)).toBeGreaterThan(3);
+            expect(status()).not.toMatch(/did not fit:/); // too many to name in the note
+            const button = document.querySelector("#suTreeStatus .sutree-linkbutton");
+            expect(button.textContent).toBe("See the list");
+            expect(document.getElementById("suTreeUnseen").hidden).toBe(true);
+            await click(".sutree-linkbutton");
+            const popup = document.getElementById("suTreeUnseen");
+            expect(popup.hidden).toBe(false);
+            expect(document.getElementById("suTreeUnseenTitle").textContent).toBe(`${left} rarer surnames did not fit`);
+            const rows = [...popup.querySelectorAll("li")].map((li) => li.textContent);
+            expect(rows).toHaveLength(Number(left));
+            expect(rows[0]).toMatch(/\d+ profiles?$/);
+        });
+
+        it("closes with the x or the Esc key, and a click on a name opens the list of its people", async () => {
+            await smallShape();
+            await click(".sutree-linkbutton");
+            await click("#suTreeUnseenClose");
+            expect(document.getElementById("suTreeUnseen").hidden).toBe(true);
+            await click(".sutree-linkbutton");
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            expect(document.getElementById("suTreeUnseen").hidden).toBe(true);
+            await click(".sutree-linkbutton");
+            const name = document.querySelector(".sutree-unseen-name");
+            const surname = name.dataset.name;
+            await click(".sutree-unseen-name");
+            expect(document.getElementById("suTreeUnseen").hidden).toBe(true);
+            expect(document.getElementById("suTreeList").hidden).toBe(false);
+            expect(document.getElementById("suTreeListName").textContent).toBe(surname);
+        });
+
+        it("has no list when every name fits", async () => {
+            await open();
+            expect(document.querySelector(".sutree-linkbutton")).toBeNull();
+            expect(status()).not.toMatch(/did not fit/);
         });
     });
 
