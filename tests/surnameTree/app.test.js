@@ -551,6 +551,87 @@ describe("Surname Tree", () => {
         });
     });
 
+    describe("the wide banner for a profile's background", () => {
+        const sizes = () => [...document.getElementById("suTreeSize").options].map((o) => o.value);
+
+        it("fills a wide, short frame with the names in the greens of the canopy on a pale green background", async () => {
+            await open();
+            await change("#suTreeShapeKind", "banner");
+            const svg = document.getElementById("suTreeSvg");
+            const [, , w, h] = svg.getAttribute("viewBox").split(" ").map(Number);
+            expect(w / h).toBeGreaterThan(6);
+            expect(document.querySelector(".sutree-banner-bg").getAttribute("fill")).toBe("#e9f4e1");
+            expect(document.querySelector(".sutree-trunk")).toBeNull();
+            expect(document.querySelector(".sutree-crown")).toBeNull();
+            const fills = new Set(
+                [...document.querySelectorAll(".sutree-word text")].map((t) => t.getAttribute("fill"))
+            );
+            expect(fills.size).toBeGreaterThan(1); // the canopy's several greens
+            expect(document.getElementById("suTreeLook").disabled).toBe(true);
+            expect(document.getElementById("suTreeBannerBox").hidden).toBe(false);
+            expect(document.getElementById("suTreeBannerWordColor").hidden).toBe(true);
+            expect(document.querySelector(".sutree-stage").classList.contains("sutree-banner")).toBe(true);
+            // every name is placed, and no word is outside the frame
+            document.querySelectorAll(".sutree-word").forEach((g) => {
+                const [, x, y] = g
+                    .getAttribute("transform")
+                    .match(/translate\(([-\d.]+) ([-\d.]+)\)/)
+                    .map(Number);
+                expect(x).toBeGreaterThan(0);
+                expect(x).toBeLessThan(w);
+                expect(y).toBeGreaterThan(0);
+                expect(y).toBeLessThan(h);
+            });
+        });
+
+        it("lets the member choose the background colour and one colour for every word", async () => {
+            await open();
+            await change("#suTreeShapeKind", "banner");
+            await change("#suTreeBannerBackground", "#102030");
+            expect(document.querySelector(".sutree-banner-bg").getAttribute("fill")).toBe("#102030");
+            await change("#suTreeBannerWords", "one");
+            expect(document.getElementById("suTreeBannerWordColor").hidden).toBe(false);
+            await change("#suTreeBannerWordColor", "#aabbcc");
+            const fills = new Set(
+                [...document.querySelectorAll(".sutree-word text")].map((t) => t.getAttribute("fill"))
+            );
+            expect([...fills]).toEqual(["#aabbcc"]);
+            await change("#suTreeBannerWords", "canopy");
+            expect(document.getElementById("suTreeBannerWordColor").hidden).toBe(true);
+        });
+
+        it("offers wider sizes for the banner, with its own height, and goes back to the tree's", async () => {
+            await open();
+            expect(sizes()).toEqual(["small", "medium", "large", "custom"]);
+            expect(document.getElementById("suTreeSize").value).toBe("small");
+            expect(document.querySelector('#suTreeSize option[value="small"]').textContent).toMatch(/800 × 704 pixels/);
+            await change("#suTreeShapeKind", "banner");
+            expect(document.getElementById("suTreeSize").value).toBe("large"); // wide enough for most screens
+            expect(document.querySelector('#suTreeSize option[value="large"]').textContent).toMatch(
+                /2,560 × 400 pixels/
+            );
+            expect(document.querySelector('#suTreeSize option[value="small"]').textContent).toMatch(
+                /1,280 × 200 pixels/
+            );
+            await change("#suTreeShapeKind", "tree");
+            expect(document.getElementById("suTreeSize").value).toBe("small");
+            expect(document.getElementById("suTreeLook").disabled).toBe(false);
+            expect(document.querySelector(".sutree-stage").classList.contains("sutree-banner")).toBe(false);
+        });
+
+        it("saves a banner picture at the banner's size, drawn with its colours", async () => {
+            await open();
+            await change("#suTreeShapeKind", "banner");
+            await click("#suTreeSaveAs");
+            await click("#suTreeSaveGo");
+            await settle();
+            expect(global.mockBlobs.length).toBeGreaterThan(0);
+            const saved = global.mockBlobs[global.mockBlobs.length - 1];
+            expect(saved.width).toBe(2560);
+            expect(saved.height).toBe(400);
+        });
+    });
+
     describe("a name shown more than once", () => {
         const hover = async (surname) => {
             const group = [...document.querySelectorAll(".sutree-word")].find((g) => g.dataset.surname === surname);
@@ -630,6 +711,7 @@ describe("Surname Tree", () => {
                 "wikitree-heart",
                 "oak-picture",
                 "image",
+                "banner",
             ]);
             expect([...document.getElementById("suTreeShapeKind").options].map((o) => o.textContent)).toEqual([
                 "Oak tree (drawn)",
@@ -637,6 +719,7 @@ describe("Surname Tree", () => {
                 "WikiTree heart",
                 "Oak tree (picture)",
                 "My picture",
+                "Wide banner (profile background)",
             ]);
             expect(chosenShape()).toBe("tree");
             expect(document.getElementById("suTreeChoose").hidden).toBe(true);
