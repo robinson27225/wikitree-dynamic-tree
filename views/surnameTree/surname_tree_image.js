@@ -115,7 +115,7 @@ function removeSpecks(mask, cols, rows) {
  * the picture placed in it at `rect` (see placeInFrame). A picture with transparent parts is cut out by its transparency;
  * any other is cut out by its background, taken to be the main colour or colours along its edges, and every pixel further
  * from all of them than `sensitivity` is the shape. With `leaveWhite`, white (or nearly white) parts inside the picture are
- * left empty too, so a white design on a coloured logo shows as a gap. Returns { kind: "image", masks, cellRgb, coverage, background }, where masks is
+ * left empty too, so a white design on a coloured logo shows as a gap. Returns { kind: "image", masks, cellRgb, pixelMask, coverage, background }, where masks is
  * like buildMasks' (the whole shape is "crown", and there is no "trunk"), cellRgb holds the average colour of each cell
  * (three bytes a cell), and coverage is the share of the frame that the shape fills.
  */
@@ -182,6 +182,7 @@ export function shapeFromPixels(pixels, rect, sensitivity = DEFAULT_SENSITIVITY,
         kind: "image",
         masks: { cols, rows, crown, trunk: new Uint8Array(cols * rows) },
         cellRgb,
+        pixelMask: on, // the shape pixel by pixel (WIDTH x HEIGHT, as in the frame), for a smooth outline behind the words
         coverage: filled / (cols * rows),
         background: useAlpha ? "transparent" : background, // "transparent", or a list of [red, green, blue]
     };
@@ -321,7 +322,12 @@ export const BUILT_IN_PICTURES = [
     { id: "oak-picture", name: "Oak tree (picture)", file: "images/oak-tree.jpg", leaveWhite: false },
 ];
 
-/** The shape cut out of the picture, as a PNG data address for showing faintly behind the words ("" if it cannot be made). */
+/**
+ * The shape cut out of the picture, as a PNG data address for showing faintly behind the words ("" if it cannot be made).
+ * The words are laid out on a grid of CELL-sized squares, so a shape taken from the grid has stepped edges. The outline here
+ * comes from the picture's own pixels instead (the grid is used only to leave out specks), softened over a pixel so that it
+ * is smooth at any zoom.
+ */
 export function backdropDataUrl(shape, pixels) {
     try {
         const canvas = document.createElement("canvas");
@@ -329,15 +335,33 @@ export function backdropDataUrl(shape, pixels) {
         canvas.height = HEIGHT;
         const g = canvas.getContext("2d");
         const out = g.createImageData(WIDTH, HEIGHT);
-        const { cols, crown } = shape.masks;
+        const { cols, rows, crown } = shape.masks;
+        const near = (c, r) => {
+            // is this cell, or one beside it, part of the shape: the pixels at an edge belong to a cell that is not
+            for (let dr = -1; dr <= 1; dr++)
+                for (let dc = -1; dc <= 1; dc++) {
+                    const cc = c + dc;
+                    const rr = r + dr;
+                    if (cc >= 0 && rr >= 0 && cc < cols && rr < rows && crown[rr * cols + cc]) return true;
+                }
+            return false;
+        };
+        const mask = shape.pixelMask;
+        const inside = (x, y) => {
+            if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return 0;
+            if (mask) return mask[y * WIDTH + x];
+            return crown[Math.floor(y / CELL) * cols + Math.floor(x / CELL)] ? 1 : 0;
+        };
         for (let y = 0; y < HEIGHT; y++) {
             for (let x = 0; x < WIDTH; x++) {
-                if (!crown[Math.floor(y / CELL) * cols + Math.floor(x / CELL)]) continue;
+                let sum = 0;
+                for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sum += inside(x + dx, y + dy);
+                if (!sum || !near(Math.floor(x / CELL), Math.floor(y / CELL))) continue;
                 const at = (y * WIDTH + x) * 4;
                 out.data[at] = pixels.data[at];
                 out.data[at + 1] = pixels.data[at + 1];
                 out.data[at + 2] = pixels.data[at + 2];
-                out.data[at + 3] = 255;
+                out.data[at + 3] = Math.round((sum / 9) * 255);
             }
         }
         g.putImageData(out, 0, 0);
