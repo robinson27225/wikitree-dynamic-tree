@@ -5,7 +5,9 @@ global.WikiTreeAPI = {
 
 const {
     MAX_CC_PAGES,
+    MAX_GROUP_PROFILES,
     fetchAncestors,
+    fetchGroup,
     fetchNearby,
     fetchScope,
 } = require("../../views/surnameTree/surname_tree_data.js");
@@ -144,5 +146,46 @@ describe("fetchScope", () => {
         global.mockGetPeople = jest.fn(() => Promise.resolve(["", {}, { 1: TREE[1] }]));
         expect(Object.keys(summary(await fetchScope("cc7", "X-1", 7)))).toEqual(["1"]);
         expect(global.mockGetPeople.mock.calls[0][3]).toEqual(expect.objectContaining({ nuclear: 7 }));
+    });
+});
+
+describe("fetchGroup", () => {
+    const answer = (profiles, found = profiles.length) => ({
+        ok: true,
+        json: () => Promise.resolve({ response: { found, profiles } }),
+    });
+
+    it("asks WikiTree+ for the profiles of the query, then WikiTree for the people, each counting as both kinds", async () => {
+        global.fetch = jest.fn(() => Promise.resolve(answer([1, 4, 99])));
+        const result = await fetchGroup("CategoryFull=Foo_Bar");
+        const url = global.fetch.mock.calls[0][0];
+        expect(url).toContain("plus.wikitree.com/function/WTWebProfileSearch/Profiles.json");
+        expect(url).toContain(`Query=${encodeURIComponent("CategoryFull=Foo_Bar")}`);
+        expect(result.entries.map((e) => e.person.Id).sort()).toEqual([1, 4]); // 99 is not a known profile
+        expect(result.entries.every((e) => e.bio && e.adopt)).toBe(true);
+        expect(result.truncated).toBe(false);
+    });
+
+    it("says when WikiTree+ found more than are read", async () => {
+        global.fetch = jest.fn(() => Promise.resolve(answer([1, 2], MAX_GROUP_PROFILES + 10)));
+        const result = await fetchGroup("Surname=X");
+        expect(result.truncated).toBe(true);
+        expect(result.limit).toBe(MAX_GROUP_PROFILES);
+    });
+
+    it("reads nobody when nothing is found, and fails when WikiTree+ cannot be reached", async () => {
+        global.fetch = jest.fn(() =>
+            Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { found: 0 } }) })
+        );
+        expect((await fetchGroup("Surname=Nobody")).entries).toEqual([]);
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 503 }));
+        await expect(fetchGroup("Surname=X")).rejects.toThrow(/503/);
+    });
+
+    it("is what fetchScope uses for a category or a search", async () => {
+        global.fetch = jest.fn(() => Promise.resolve(answer([1])));
+        expect((await fetchScope("category", "X-1", "CategoryFull=A")).entries).toHaveLength(1);
+        expect((await fetchScope("search", "X-1", "Surname=A")).entries).toHaveLength(1);
+        expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 });

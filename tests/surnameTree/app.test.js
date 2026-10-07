@@ -494,6 +494,74 @@ describe("Surname Tree", () => {
         });
     });
 
+    describe("reach: a category or a WikiTree+ search", () => {
+        const ids = () => Object.values(global.mockTree).map((p) => p.Id);
+        beforeEach(() => {
+            global.fetch = jest.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ response: { found: 3, profiles: ids().slice(0, 3) } }),
+                })
+            );
+        });
+
+        it("offers both, and asks for a name or a search instead of generations", async () => {
+            await open();
+            const scopes = [...document.getElementById("suTreeScope").options].map((o) => o.value);
+            expect(scopes).toEqual(["ancestors", "cc7", "category", "search"]);
+            expect(document.getElementById("suTreeQueryBox").hidden).toBe(true);
+            await change("#suTreeScope", "category");
+            expect(document.getElementById("suTreeQueryBox").hidden).toBe(false);
+            expect(document.querySelector(".sutree-stepper").hidden).toBe(true);
+            expect(document.querySelector(".sutree-show").hidden).toBe(true);
+            expect(status()).toMatch(/Type the name of a category above and press Draw/);
+            expect(global.fetch).not.toHaveBeenCalled();
+        });
+
+        it("draws the people of a category when Draw is pressed, and does not ask again for the same one", async () => {
+            await open();
+            await change("#suTreeScope", "category");
+            document.getElementById("suTreeQuery").value = "Mayflower Passengers";
+            await click("#suTreeGo");
+            expect(global.fetch.mock.calls[0][0]).toContain(encodeURIComponent("CategoryFull=Mayflower_Passengers"));
+            expect(words().length).toBeGreaterThan(0);
+            expect(status()).toMatch(/from 3 people \(A category: Mayflower Passengers\)/);
+            await click("#suTreeGo");
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("draws on Enter, from a search, and says so when nobody is found", async () => {
+            await open();
+            await change("#suTreeScope", "search");
+            global.fetch = jest.fn(() =>
+                Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { found: 0 } }) })
+            );
+            const input = document.getElementById("suTreeQuery");
+            input.value = "Surname=Nobody";
+            input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+            await settle();
+            expect(global.fetch.mock.calls[0][0]).toContain(encodeURIComponent("Surname=Nobody"));
+            expect(status()).toMatch(/Nobody was found in that search/);
+        });
+
+        it("says so when WikiTree+ cannot be reached", async () => {
+            await open();
+            await change("#suTreeScope", "category");
+            global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 503 }));
+            document.getElementById("suTreeQuery").value = "Foo";
+            await click("#suTreeGo");
+            expect(status()).toMatch(/could not be reached/);
+        });
+
+        it("opens on a category given in the options", async () => {
+            global.mockOptions = { ...START, scope: "category", query: "Foo Bar" };
+            await open();
+            expect(document.getElementById("suTreeQuery").value).toBe("Foo Bar");
+            expect(global.fetch.mock.calls[0][0]).toContain(encodeURIComponent("CategoryFull=Foo_Bar"));
+            expect(words().length).toBeGreaterThan(0);
+        });
+    });
+
     describe("look: shaded or flat", () => {
         it("offers both, starts on the one in the options, and redraws without asking the API again", async () => {
             global.mockOptions = { ...START, fillGaps: true };

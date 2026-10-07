@@ -18,6 +18,9 @@ import {
     chooseAngle,
     crownBalance,
     colorFor,
+    categoryQuery,
+    searchQuery,
+    groupQuery,
     crownColors,
     chooseByRelation,
     countSurnames,
@@ -525,7 +528,7 @@ describe("layoutWords", () => {
 
 describe("scopes", () => {
     it("offers ancestors and CC7, with limits for the + and - buttons", () => {
-        expect(SCOPES.map((x) => x.id)).toEqual(["ancestors", "cc7"]);
+        expect(SCOPES.map((x) => x.id)).toEqual(["ancestors", "cc7", "category", "search"]);
         expect(scopeById("cc7")).toMatchObject({ units: "degrees", min: 1, max: 10, start: 7 });
         expect(scopeById("ancestors")).toMatchObject({ units: "generations", min: 2, max: 12 });
         expect(scopeById("nonsense").id).toBe("ancestors");
@@ -893,6 +896,36 @@ describe("the outlined look and the leader and limbs of the tree", () => {
             const sides = new Set(tree.limbs.map((l) => l.side));
             expect(sides.size).toBe(2);
         }
+    });
+});
+
+describe("a category or a search as the reach", () => {
+    it("turns a category as typed or pasted into the WikiTree+ query", () => {
+        expect(categoryQuery("Mayflower Passengers")).toBe("CategoryFull=Mayflower_Passengers");
+        expect(categoryQuery("  Category:Mayflower_Passengers ")).toBe("CategoryFull=Mayflower_Passengers");
+        expect(categoryQuery("Cemeteries, Cheshire")).toBe("CategoryFull=Cemeteries__Cheshire");
+        expect(categoryQuery("https://www.wikitree.com/wiki/Category:Robinson_Name_Study")).toBe(
+            "CategoryFull=Robinson_Name_Study"
+        );
+        expect(categoryQuery('"Titanic Passengers"')).toBe("CategoryFull=Titanic_Passengers");
+        expect(categoryQuery("   ")).toBe("");
+        expect(categoryQuery(undefined)).toBe("");
+    });
+
+    it("takes a search as typed, or the Query of a WikiTree+ address", () => {
+        expect(searchQuery("  Surname=Smith Born=1850..1900 ")).toBe("Surname=Smith Born=1850..1900");
+        expect(
+            searchQuery("https://plus.wikitree.com/default.htm?report=srch1&Query=Surname%3DSmith+Location%3DOhio")
+        ).toBe("Surname=Smith Location=Ohio");
+        expect(searchQuery("https://plus.wikitree.com/default.htm?report=srch1")).toBe("");
+        expect(searchQuery("")).toBe("");
+    });
+
+    it("builds the right query for each reach, and offers both as reaches", () => {
+        expect(groupQuery("category", "Foo Bar")).toBe("CategoryFull=Foo_Bar");
+        expect(groupQuery("search", "Surname=Foo")).toBe("Surname=Foo");
+        expect(SCOPES.filter((s) => s.group).map((s) => s.id)).toEqual(["category", "search"]);
+        expect(scopeById("category").what).toBe("category");
     });
 });
 
