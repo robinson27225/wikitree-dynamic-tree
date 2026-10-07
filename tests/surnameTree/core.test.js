@@ -523,6 +523,47 @@ describe("layoutWords", () => {
     });
 });
 
+describe("every surname gets a place if there is room anywhere", () => {
+    // a heart-shaped region, as a picture of a heart would give
+    const heart = () => {
+        const cols = 250;
+        const rows = 220;
+        const crown = new Uint8Array(cols * rows);
+        for (let r = 0; r < rows; r++)
+            for (let c = 0; c < cols; c++) {
+                const x = (c - 125) / 95;
+                const y = -(r - 100) / 95;
+                if ((x * x + y * y - 1) ** 3 - x * x * y ** 3 < 0) crown[r * cols + c] = 1;
+            }
+        return { cols, rows, crown, trunk: new Uint8Array(cols * rows) };
+    };
+    const names = Array.from({ length: 150 }, (_, i) => ({
+        text: `SURN${String.fromCharCode(65 + (i % 26))}${"X".repeat(i % 5)}${i}`,
+        count: Math.max(1, Math.round(60 / (i + 1))),
+    }));
+
+    it("tries the names that did not fit at first in the gaps, at smaller sizes", () => {
+        const items = layoutWords({ words: names, measure, random: seededRandom(3), masks: heart(), fillGaps: false });
+        const placed = new Set(items.map((i) => i.text)).size;
+        expect(placed).toBeGreaterThan(115); // without the rescue about 100 of the 150 found room
+        expect(Math.min(...items.map((i) => i.size))).toBeLessThan(8);
+    });
+
+    it("still keeps every word inside the shape and apart from the others", () => {
+        const masks = heart();
+        const items = layoutWords({ words: names, measure, random: seededRandom(3), masks });
+        const seen = new Set();
+        items.forEach((item) =>
+            wordCells(item).forEach(([col, row]) => {
+                const id = `${col},${row}`;
+                expect(seen.has(id)).toBe(false);
+                seen.add(id);
+                expect(masks.crown[row * masks.cols + col]).toBeTruthy();
+            })
+        );
+    });
+});
+
 describe("scopes", () => {
     it("offers ancestors and CC7, with limits for the + and - buttons", () => {
         expect(SCOPES.map((x) => x.id)).toEqual(["ancestors", "cc7"]);

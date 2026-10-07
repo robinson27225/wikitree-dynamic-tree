@@ -12,6 +12,7 @@ import {
     MARGIN,
     MAX_FILE_BYTES,
     MIN_COVERAGE,
+    backdropDataUrl,
     BUILT_IN_PICTURES,
     fileProblem,
     legibleColour,
@@ -210,6 +211,53 @@ describe("cutting a shape out of a picture", () => {
         );
         expect(outside).toBe(0);
         expect(shape.masks.trunk.every((v) => v === 0)).toBe(true);
+    });
+});
+
+describe("the outline behind the words", () => {
+    // a stand-in for the page's canvas, keeping what is drawn
+    const withCanvas = (run) => {
+        let image = null;
+        global.document = {
+            createElement: () => ({
+                getContext: () => ({
+                    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+                    putImageData: (data) => (image = data),
+                }),
+                toDataURL: () => "data:image/png;base64,AAAA",
+            }),
+        };
+        try {
+            run(() => image);
+        } finally {
+            delete global.document;
+        }
+    };
+
+    it("keeps the picture's own pixel outline, not only the layout grid's", () => {
+        const pixels = picture([255, 255, 255], disc(500, 440, 300, [30, 140, 40]));
+        const shape = shapeFromPixels(pixels, FRAME);
+        expect(shape.pixelMask).toHaveLength(WIDTH * HEIGHT);
+        expect(shape.pixelMask[440 * WIDTH + 500]).toBe(1);
+        expect(shape.pixelMask[30 * WIDTH + 30]).toBe(0);
+    });
+
+    it("is soft along the edge, solid inside and empty outside, in the picture's colours", () => {
+        const pixels = picture([255, 255, 255], disc(500, 440, 300, [30, 140, 40]));
+        const shape = shapeFromPixels(pixels, FRAME);
+        withCanvas((image) => {
+            expect(backdropDataUrl(shape, pixels)).toMatch(/^data:image\/png/);
+            const { data } = image();
+            const alpha = (x, y) => data[(y * WIDTH + x) * 4 + 3];
+            expect(alpha(500, 440)).toBe(255);
+            expect(alpha(30, 30)).toBe(0);
+            expect([...data.slice((440 * WIDTH + 500) * 4, (440 * WIDTH + 500) * 4 + 3)]).toEqual([30, 140, 40]);
+            // along the edge of the disc the alpha takes in-between values, which makes the outline smooth
+            const edge = new Set();
+            for (let x = 195; x < 205; x++) edge.add(alpha(x, 440));
+            for (let y = 135; y < 145; y++) edge.add(alpha(500, y));
+            expect([...edge].some((a) => a > 0 && a < 255)).toBe(true);
+        });
     });
 });
 

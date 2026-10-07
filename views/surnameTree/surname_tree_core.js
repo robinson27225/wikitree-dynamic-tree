@@ -831,6 +831,10 @@ function centroid(mask, cols) {
 /** The most surnames laid out, and how many in a row may fail to fit before the rest are given up on. */
 export const MAX_WORDS = 600;
 const MAX_MISSES = 15;
+/** The rescue pass for names that found no room: it starts no bigger than RESCUE_START, may go as small as RESCUE_MIN_FONT, and gives up after this many in a row. */
+const RESCUE_START = 14;
+const RESCUE_MIN_FONT = 6;
+const MAX_RESCUE_MISSES = 150;
 
 export const MAX_FONT = 118;
 export const MIN_FONT = 10;
@@ -1017,11 +1021,11 @@ export function layoutWords({
         return null;
     };
 
-    const place = (word, size, regionName, angle, rank, inGaps = false) => {
+    const place = (word, size, regionName, angle, rank, inGaps = false, smallest = tune.minFont) => {
         const region = regions[regionName];
         if (region.empty) return null;
         let fontSize = size;
-        while (fontSize >= tune.minFont) {
+        while (fontSize >= smallest) {
             const w = measure(word.text, fontSize);
             const h = fontSize * CAP_HEIGHT;
             const cover = boxOffsets(w, h, angle, CELL * 0.5);
@@ -1070,14 +1074,33 @@ export function layoutWords({
         misses = done ? 0 : misses + 1;
     }
 
+    // The cells still free, for the passes below to try (see findSpotInGaps)
+    Object.values(regions).forEach((region) => {
+        region.pool = [];
+        for (let cell = 0; cell < region.mask.length; cell++)
+            if (region.mask[cell] && !taken[cell]) region.pool.push(cell);
+    });
+
+    // Rescue: pass one gives up after a run of names that find no room, and a name may simply not have fitted where the
+    // spiral looked. Every name left over gets a second try in the gaps, at any size down to a very small one, so that a
+    // surname is left out only when there is truly no room for it.
+    const placedWords = new Set(placed.map((item) => item.text));
+    let rescueMisses = 0;
+    for (let index = 0; index < Math.min(words.length, MAX_WORDS) && rescueMisses < MAX_RESCUE_MISSES; index++) {
+        const word = words[index];
+        if (placedWords.has(word.text)) continue;
+        const size = Math.min(fontSizeFor(word.count, minCount, maxCount), RESCUE_START);
+        const regionName = random() < 0.8 ? "crown" : "trunk";
+        const angle = chooseAngle(random, 99, size);
+        const done =
+            place(word, size, regionName, angle, index, true, RESCUE_MIN_FONT) ||
+            place(word, size, regionName === "crown" ? "trunk" : "crown", angle, index, true, RESCUE_MIN_FONT);
+        rescueMisses = done ? 0 : rescueMisses + 1;
+        if (done) placedWords.add(word.text);
+    }
+
     // Pass two: if the member wants the tree filled, repeat the names at small sizes until nothing more fits.
     if (fillGaps) {
-        // the cells still free, for the gap-filling words to try (see findSpotInGaps)
-        Object.values(regions).forEach((region) => {
-            region.pool = [];
-            for (let cell = 0; cell < region.mask.length; cell++)
-                if (region.mask[cell] && !taken[cell]) region.pool.push(cell);
-        });
         let missed = 0;
         let i = 0;
         const limit = tune.fillLimit;
