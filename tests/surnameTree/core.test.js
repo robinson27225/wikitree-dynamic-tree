@@ -18,6 +18,7 @@ import {
     chooseAngle,
     crownBalance,
     colorFor,
+    unseenNote,
     crownColors,
     chooseByRelation,
     countSurnames,
@@ -959,5 +960,24 @@ describe("colours", () => {
             brightness(colorFor({ ...item, x: 850, y: 520 }))
         );
         expect(colorFor({ ...item, region: "trunk", x: 500, y: 700 })).toMatch(/^#[0-9a-f]{6}$/);
+    });
+});
+
+describe("the note about names that did not fit", () => {
+    it("names the one name left out, in the singular", () => {
+        expect(unseenNote(["BOSWELL"], "surname", "surnames")).toBe(" 1 rarer surname did not fit: BOSWELL.");
+    });
+
+    it("names the first few of several and says how many more", () => {
+        const names = Array.from({ length: 30 }, (_, i) => `N${i}`);
+        const note = unseenNote(names, "surname", "surnames", 3);
+        expect(note).toBe(" 30 rarer surnames did not fit: N0, N1, N2, and 27 more.");
+        expect(unseenNote(names.slice(0, 3), "first name", "first names", 3)).toBe(
+            " 3 rarer first names did not fit: N0, N1, N2."
+        );
+    });
+
+    it("says nothing when every name fitted", () => {
+        expect(unseenNote([], "surname", "surnames")).toBe("");
     });
 });

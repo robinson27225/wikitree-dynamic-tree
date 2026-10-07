@@ -1222,3 +1222,15 @@ export function colorFor(item, look = "shaded") {
     const toward = (item.x / WIDTH - 0.5) * 8 + (item.y / HEIGHT - 0.4) * 12; // positive towards the lower right
     return hslToHex(h, s, clamp(l - toward, 16, 58));
 }
+
+/**
+ * The note about the names that found no room: " 1 rarer surname did not fit: BOSWELL." or " 30 rarer surnames did not fit:
+ * A, B, C, and 27 more." The first `listed` are named. "" when none were left out.
+ */
+export function unseenNote(names, noun, nouns, listed = 12) {
+    if (!names.length) return "";
+    const more = names.length > listed ? `, and ${(names.length - listed).toLocaleString()} more` : "";
+    return ` ${names.length.toLocaleString()} rarer ${names.length === 1 ? noun : nouns} did not fit: ${names
+        .slice(0, listed)
+        .join(", ")}${more}.`;
+}
