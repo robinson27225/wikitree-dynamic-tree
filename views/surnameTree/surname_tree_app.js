@@ -601,7 +601,13 @@ export function mountApp(container, key, options) {
         if (!word) return;
         const stage = find(".sutree-stage")[0];
         const rect = stage.getBoundingClientRect();
-        tip.innerHTML = `<b></b> <span class="sutree-tip-count"></span><div class="sutree-tip-hint">Click to list them</div>`;
+        // a name seen more than once has small copies that fill the gaps; say so, since it can look like a mistake
+        const copies = (wordGroups.get(surname) || []).length;
+        tip.innerHTML =
+            `<b></b> <span class="sutree-tip-count"></span><div class="sutree-tip-hint">Click to list them</div>` +
+            (copies > 1
+                ? `<div class="sutree-tip-hint">This name is shown ${copies} times. The small copies fill the gaps; untick Fill the gaps to see each name once.</div>`
+                : "");
         tip.querySelector("b").textContent = surname;
         tip.querySelector(".sutree-tip-count").textContent = countText(word);
         tip.style.left = `${Math.max(4, Math.min(event.clientX - rect.left + 14, rect.width - 260))}px`;

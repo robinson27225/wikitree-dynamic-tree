@@ -619,6 +619,29 @@ describe("Surname Tree", () => {
         });
     });
 
+    describe("a name shown more than once", () => {
+        const hover = async (surname) => {
+            const group = [...document.querySelectorAll(".sutree-word")].find((g) => g.dataset.surname === surname);
+            group.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, clientX: 50, clientY: 50 }));
+            await settle();
+        };
+
+        it("tells, when hovered, that the small copies fill the gaps", async () => {
+            global.mockOptions = { ...START, fillGaps: true };
+            await open();
+            const repeated = distinctWords().find((name) => words().filter((w) => w === name).length > 1);
+            expect(repeated).toBeTruthy();
+            await hover(repeated);
+            expect(document.getElementById("suTreeTip").textContent).toMatch(/shown \d+ times.*untick Fill the gaps/);
+        });
+
+        it("says nothing of the kind for a name shown once", async () => {
+            await open(); // Fill the gaps is off: each name once
+            await hover(distinctWords()[0]);
+            expect(document.getElementById("suTreeTip").textContent).not.toMatch(/times/);
+        });
+    });
+
     describe("look: shaded or flat", () => {
         it("offers both, starts on the one in the options, and redraws without asking the API again", async () => {
             global.mockOptions = { ...START, fillGaps: true };
