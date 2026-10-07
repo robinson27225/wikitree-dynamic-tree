@@ -65,6 +65,7 @@ The options can be given after the view, so a link opens the tree as set:
 | `adoptive`    | `0` or `1`                                               | `1`         |
 | `fill`        | `0` or `1` (repeat names in small type to fill the gaps) | `1`         |
 | `look`        | `shaded`, `flat`, `outlined`                             | `shaded`    |
+| `query`       | the category or search, for `scope=category` or `search` |             |
 
 For example: `#name=Example-42&view=surnametree&names=first&scope=cc7&degrees=5&adoptive=0`
 
