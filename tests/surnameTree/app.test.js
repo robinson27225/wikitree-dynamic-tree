@@ -640,6 +640,21 @@ describe("Surname Tree", () => {
             expect(global.mockReadImage).not.toHaveBeenCalled();
         });
 
+        it("shows the Choose picture button and says to click it, for browsers (Safari) that block the chooser opened from a menu", async () => {
+            await open();
+            const input = document.getElementById("suTreeFile");
+            input.click = jest.fn(); // as if the browser had not opened it
+            await change("#suTreeShapeKind", "image");
+            expect(chosenShape()).toBe("image");
+            expect(document.getElementById("suTreeChoose").hidden).toBe(false);
+            expect(status()).toMatch(/Click Choose picture/);
+            expect(document.querySelector(".sutree-trunk")).not.toBeNull(); // the oak stays until there is a picture
+            await click("#suTreeChoose");
+            expect(input.click).toHaveBeenCalledTimes(2);
+            await chooseFile("disc.png");
+            expect(document.querySelector(".sutree-backdrop")).not.toBeNull();
+        });
+
         it("fills the picture's shape with the words, in the picture's colours, with the picture faintly behind", async () => {
             await open();
             await change("#suTreeShapeKind", "image");
