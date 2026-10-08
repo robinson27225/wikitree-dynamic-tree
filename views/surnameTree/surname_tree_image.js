@@ -19,7 +19,7 @@ export const MAX_SENSITIVITY = 160;
 /** A shape that covers less of the frame than this is not a shape (the picture is all background, or all one colour). */
 export const MIN_COVERAGE = 0.02;
 /** Bits of the picture smaller than this many cells are dust, and are dropped, unless nothing bigger exists. */
-const MIN_ISLAND = 40;
+const MIN_ISLAND = Math.round(40 * (4 / CELL) ** 2);
 /** With leaveWhite, a pixel whose red, green and blue are all at least this much counts as white. */
 const WHITE = 232;
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;

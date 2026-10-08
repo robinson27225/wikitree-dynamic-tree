@@ -41,7 +41,7 @@ import {
     shapeFromPixels,
     wordColour,
 } from "./surname_tree_image.js";
-import { makeMeasure } from "./surname_tree_draw.js";
+import { inkOffsets, makeMeasure } from "./surname_tree_draw.js";
 import {
     DEFAULT_SIZE,
     defaultSizeFor,
@@ -420,6 +420,7 @@ export function mountApp(container, key, options) {
             masks: shape.kind === "image" || shape.kind === "banner" ? shape.masks : buildMasks(shape),
             look: shape.kind === "banner" ? "flat" : state.look, // the banner's words are packed tightly
             fonts: shape.kind === "banner" ? BANNER_FONTS : undefined,
+            ink: inkOffsets, // the names take up their letters' room, so short ones can go inside the O and the D of long ones
         };
         // a whole picture (a photograph) is filled right up, with the names as big as will let every one fit
         state.items = shape.whole
