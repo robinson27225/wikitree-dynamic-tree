@@ -19,6 +19,7 @@ import {
     crownBalance,
     colorFor,
     unseenNote,
+    layoutToFill,
     BANNER_FONTS,
     BANNER_FRAME,
     buildBannerShape,
@@ -548,11 +549,30 @@ describe("every surname gets a place if there is room anywhere", () => {
         count: Math.max(1, Math.round(60 / (i + 1))),
     }));
 
-    it("tries the names that did not fit at first in the gaps, at smaller sizes", () => {
+    it("places every name when there is room, close together as in a hand-made word cloud", () => {
         const items = layoutWords({ words: names, measure, random: seededRandom(3), masks: heart(), fillGaps: false });
+        expect(new Set(items.map((i) => i.text)).size).toBe(names.length);
+    });
+
+    it("tries the names that did not fit at first in the gaps, at smaller sizes", () => {
+        const many = Array.from({ length: 320 }, (_, i) => ({
+            text: `SURN${String.fromCharCode(65 + (i % 26))}${"X".repeat(i % 5)}${i}`,
+            count: Math.max(1, Math.round(60 / (i + 1))),
+        }));
+        const items = layoutWords({ words: many, measure, random: seededRandom(3), masks: heart(), fillGaps: false });
         const placed = new Set(items.map((i) => i.text)).size;
-        expect(placed).toBeGreaterThan(115); // without the rescue about 100 of the 150 found room
+        expect(placed).toBeGreaterThan(190);
         expect(Math.min(...items.map((i) => i.size))).toBeLessThan(8);
+    });
+
+    it("repeats the rarer names, not the commonest, to fill the gaps when asked to", () => {
+        const few = names.slice(0, 20);
+        const items = layoutWords({ words: few, measure, random: seededRandom(3), masks: heart(), fillGaps: true });
+        const copies = (text) => items.filter((i) => i.text === text).length;
+        const common = copies(few[0].text);
+        const rare = few.slice(-5).reduce((n, w) => n + copies(w.text), 0) / 5;
+        expect(items.length).toBeGreaterThan(few.length);
+        expect(rare).toBeGreaterThan(common);
     });
 
     it("still keeps every word inside the shape and apart from the others", () => {
@@ -1062,5 +1082,40 @@ describe("the wide banner", () => {
         // the whole width is used, not only the middle
         expect(Math.min(...items.map((i) => i.x))).toBeLessThan(200);
         expect(Math.max(...items.map((i) => i.x))).toBeGreaterThan(800);
+    });
+});
+
+describe("names as big as will let every one fit", () => {
+    const masks = buildMasks(buildTree(5));
+    const words = Array.from({ length: 30 }, (_, i) => ({
+        text: `NAME${i}${"X".repeat(i % 4)}`,
+        count: Math.max(1, 30 - i),
+    }));
+    const args = { words, measure, masks, fillGaps: false, look: "flat", makeRandom: () => seededRandom(2) };
+
+    it("makes the names bigger than usual when there is room, and still places every one", () => {
+        const usual = layoutWords({ words, measure, masks, fillGaps: false, look: "flat", random: seededRandom(2) });
+        const filled = layoutToFill(args);
+        expect(new Set(filled.map((i) => i.text)).size).toBe(words.length);
+        expect(Math.min(...filled.map((i) => i.size))).toBeGreaterThan(Math.min(...usual.map((i) => i.size)));
+        const area = (items) => items.reduce((n, i) => n + i.w * i.h, 0);
+        expect(area(filled)).toBeGreaterThan(area(usual) * 1.05);
+    });
+
+    it("keeps the usual size when the shape is already crowded", () => {
+        const many = Array.from({ length: 300 }, (_, i) => ({
+            text: `NAME${i}${"X".repeat(i % 6)}`,
+            count: Math.max(1, 40 - i),
+        }));
+        const usual = layoutWords({
+            words: many,
+            measure,
+            masks,
+            fillGaps: false,
+            look: "flat",
+            random: seededRandom(2),
+        });
+        const filled = layoutToFill({ ...args, words: many });
+        expect(filled.length).toBe(usual.length);
     });
 });

@@ -12,6 +12,8 @@ import {
     MARGIN,
     MAX_FILE_BYTES,
     MIN_COVERAGE,
+    PLAIN_EDGE_SHARE,
+    WHOLE_BACKDROP_OPACITY,
     backdropDataUrl,
     BUILT_IN_PICTURES,
     fileProblem,
@@ -211,6 +213,61 @@ describe("cutting a shape out of a picture", () => {
         );
         expect(outside).toBe(0);
         expect(shape.masks.trunk.every((v) => v === 0)).toBe(true);
+    });
+});
+
+describe("a photograph, with no background to cut away", () => {
+    // scenery to every edge: colours that change from pixel to pixel
+    const photo = () => {
+        let seed = 7;
+        const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+        return picture([120, 140, 100], (set) => {
+            for (let y = 0; y < HEIGHT; y++)
+                for (let x = 0; x < WIDTH; x++) set(x, y, [rnd() * 255, rnd() * 255, rnd() * 255]);
+        });
+    };
+
+    it("tells a plain background (nearly all the edge one colour) from a photograph's edge", () => {
+        const plain = shapeFromPixels(picture([255, 255, 255], disc(500, 440, 300, [30, 140, 40])), FRAME);
+        expect(plain.plainShare).toBeGreaterThan(0.95);
+        expect(plain.plainShare).toBeGreaterThan(PLAIN_EDGE_SHARE);
+        expect(plain.whole).toBe(false);
+        expect(shapeFromPixels(photo(), FRAME).plainShare).toBeLessThan(PLAIN_EDGE_SHARE);
+    });
+
+    it("keeps a background that is a little noisy, as a JPEG's is, as plain", () => {
+        let seed = 3;
+        const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+        const noisy = picture([240, 240, 240], (set) => {
+            for (let y = 0; y < HEIGHT; y++)
+                for (let x = 0; x < WIDTH; x++) set(x, y, [240 + rnd() * 6, 240 + rnd() * 6, 240 + rnd() * 6]);
+            disc(500, 440, 250, [30, 140, 40])(set);
+        });
+        expect(shapeFromPixels(noisy, FRAME).plainShare).toBeGreaterThan(PLAIN_EDGE_SHARE);
+    });
+
+    it("can use all of the picture as the shape, shown more strongly behind the words", () => {
+        const pixels = photo();
+        const cut = shapeFromPixels(pixels, FRAME);
+        const whole = shapeFromPixels(pixels, FRAME, undefined, { whole: true });
+        expect(whole.whole).toBe(true);
+        expect(whole.coverage).toBeGreaterThan(0.97);
+        expect(whole.backdropOpacity).toBe(WHOLE_BACKDROP_OPACITY);
+        expect(cut.backdropOpacity).toBeUndefined();
+        expect(whole.pixelMask[440 * WIDTH + 500]).toBe(1);
+    });
+
+    it("fills only the part of the frame the picture is in", () => {
+        const rect = { x: 250, y: 0, w: 500, h: HEIGHT };
+        const pixels = picture([255, 255, 255], (set) => {
+            for (let y = 0; y < HEIGHT; y++)
+                for (let x = rect.x; x < rect.x + rect.w; x++)
+                    set(x, y, [(x * 7) % 255, (y * 13) % 255, (x * y) % 255]);
+        });
+        const whole = shapeFromPixels(pixels, rect, undefined, { whole: true });
+        expect(cellOf(whole, 100, 400)).toBe(0);
+        expect(cellOf(whole, 500, 400)).toBe(1);
+        expect(cellOf(whole, 900, 400)).toBe(0);
     });
 });
 

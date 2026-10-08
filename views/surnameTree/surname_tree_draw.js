@@ -218,7 +218,7 @@ function drawOutlinedTree(g, tree) {
 function drawBackdrop(g, shape) {
     if (!shape.pictureImage) return;
     g.save();
-    g.globalAlpha = BACKDROP_OPACITY;
+    g.globalAlpha = shape.backdropOpacity ?? BACKDROP_OPACITY;
     g.drawImage(shape.pictureImage, 0, 0, WIDTH, HEIGHT);
     g.restore();
 }
