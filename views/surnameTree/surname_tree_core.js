@@ -933,6 +933,8 @@ const MAX_MISSES = 15;
 /** The rescue pass for names that found no room: it starts no bigger than RESCUE_START, may go as small as RESCUE_MIN_FONT, and gives up after this many in a row. */
 const RESCUE_START = 14;
 const RESCUE_MIN_FONT = 6;
+/** The space left round a name placed in the rescue pass, in cells (about 2 pixels): as close as in a word cloud made in WordArt, so that more of the names fit. */
+const RESCUE_GAP = 0.5;
 const MAX_RESCUE_MISSES = 150;
 
 export const MAX_FONT = 118;
@@ -950,7 +952,7 @@ export const LOOKS = [
     {
         id: "shaded",
         name: "Shaded",
-        gapCells: 1.5,
+        gapCells: 0.8,
         minFont: MIN_FONT,
         shrink: 0.88,
         fillLimit: 700,
@@ -960,7 +962,7 @@ export const LOOKS = [
     {
         id: "flat",
         name: "Flat two-tone",
-        gapCells: 0.9,
+        gapCells: 0.5,
         minFont: 7,
         shrink: 0.93,
         fillLimit: 2200,
@@ -970,7 +972,7 @@ export const LOOKS = [
     {
         id: "outlined",
         name: "Outlined",
-        gapCells: 1.1,
+        gapCells: 0.5,
         minFont: 8,
         shrink: 0.92,
         fillLimit: 1500,
@@ -1122,7 +1124,16 @@ export function layoutWords({
         return null;
     };
 
-    const place = (word, size, regionName, angle, rank, inGaps = false, smallest = tune.minFont) => {
+    const place = (
+        word,
+        size,
+        regionName,
+        angle,
+        rank,
+        inGaps = false,
+        smallest = tune.minFont,
+        gap = tune.gapCells
+    ) => {
         const region = regions[regionName];
         if (region.empty) return null;
         let fontSize = size;
@@ -1133,7 +1144,7 @@ export function layoutWords({
             const spot = inGaps ? findSpotInGaps(region, cover) : findSpot(region, cover);
             if (spot) {
                 // a gap of one more cell round the word keeps the next one from touching it
-                occupy(spot.col, spot.row, boxOffsets(w, h, angle, CELL * tune.gapCells));
+                occupy(spot.col, spot.row, boxOffsets(w, h, angle, CELL * gap));
                 const item = {
                     text: word.text,
                     count: word.count,
@@ -1194,19 +1205,30 @@ export function layoutWords({
         const regionName = random() < 0.8 ? "crown" : "trunk";
         const angle = chooseAngle(random, 99, size);
         const done =
-            place(word, size, regionName, angle, index, true, RESCUE_MIN_FONT) ||
-            place(word, size, regionName === "crown" ? "trunk" : "crown", angle, index, true, RESCUE_MIN_FONT);
+            place(word, size, regionName, angle, index, true, RESCUE_MIN_FONT, Math.min(RESCUE_GAP, tune.gapCells)) ||
+            place(
+                word,
+                size,
+                regionName === "crown" ? "trunk" : "crown",
+                angle,
+                index,
+                true,
+                RESCUE_MIN_FONT,
+                Math.min(RESCUE_GAP, tune.gapCells)
+            );
         rescueMisses = done ? 0 : rescueMisses + 1;
         if (done) placedWords.add(word.text);
     }
 
-    // Pass two: if the member wants the tree filled, repeat the names at small sizes until nothing more fits.
+    // Pass two: if the member wants the tree filled, repeat the rarer names at small sizes until nothing more fits.
     if (fillGaps) {
         let missed = 0;
         let i = 0;
+        const repeatable = Math.min(words.length, Math.max(8, Math.ceil(words.length * 0.6)));
         const limit = tune.fillLimit;
         while (missed < tune.fillMisses && i < limit) {
-            const index = i % words.length;
+            // the repeats are the rarer names, the rarest first: the common ones are big already and are not repeated
+            const index = words.length - 1 - (i % repeatable);
             const word = words[index];
             const size = Math.round(tune.fillSize[0] + random() * (tune.fillSize[1] - tune.fillSize[0]));
             const regionName = random() < 0.8 ? "crown" : "trunk";
@@ -1222,6 +1244,36 @@ export function layoutWords({
         }
     }
     return placed;
+}
+
+/** The sizes tried, from the usual one up, when the names are to fill a shape (see layoutToFill). */
+const FILL_SCALES = [1, 1.3, 1.65, 2.05, 2.5];
+
+/**
+ * layoutWords, but with the names made as big as will still let every one of them fit, so that they fill the shape (a photograph,
+ * say) and do not huddle in the middle of it. The usual sizes are tried first, then bigger ones, and the biggest that places
+ * every name (or nearly) is kept. Takes what layoutWords takes, but `makeRandom()` in place of `random`: it gives a fresh random
+ * function (a seeded one, say) for each try, so that every try is the same layout but for the size.
+ */
+export function layoutToFill({ makeRandom, fonts = {}, ...rest }) {
+    const wanted = rest.words.length;
+    const distinct = (items) => new Set(items.map((item) => item.text)).size;
+    let best = null;
+    for (const scale of FILL_SCALES) {
+        const items = layoutWords({
+            ...rest,
+            random: makeRandom(),
+            fonts: {
+                maxFont: Math.round((fonts.maxFont || MAX_FONT) * scale),
+                minFont: Math.round((fonts.minFont || 14) * scale),
+            },
+        });
+        const crowded = distinct(items) < Math.ceil(wanted * 0.97);
+        if (best && crowded) break; // too big: keep the last size that fitted
+        best = items;
+        if (crowded) break; // already crowded at the usual size, so nothing bigger would help
+    }
+    return best;
 }
 
 // ---------------------------------------------------------------------------------------------

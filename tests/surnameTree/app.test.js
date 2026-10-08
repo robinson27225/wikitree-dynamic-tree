@@ -157,12 +157,17 @@ beforeEach(() => {
 });
 
 /** A made-up picture read from a file: a disc of one colour on a plain background (or all one colour if disc is false). */
-function pictureOf(rgb, { disc = true, radius = 300 } = {}) {
+function pictureOf(rgb, { disc = true, radius = 300, photo = false } = {}) {
     const W = 1000;
     const H = 880;
     const data = new Uint8ClampedArray(W * H * 4);
     for (let i = 0; i < W * H; i++) data.set([255, 255, 255, 255], i * 4);
-    if (disc) {
+    if (photo) {
+        // scenery to every edge, colours that change from pixel to pixel
+        let seed = 9;
+        const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+        for (let i = 0; i < W * H; i++) data.set([40 + rnd() * 120, 80 + rnd() * 120, 40 + rnd() * 100, 255], i * 4);
+    } else if (disc) {
         for (let y = 440 - radius; y < 440 + radius; y++) {
             for (let x = 500 - radius; x < 500 + radius; x++)
                 if ((x - 500) ** 2 + (y - 440) ** 2 <= radius * radius) data.set([...rgb, 255], (y * W + x) * 4);
@@ -697,6 +702,48 @@ describe("Surname Tree", () => {
             const saved = global.mockBlobs[global.mockBlobs.length - 1];
             expect(saved.width).toBe(2560);
             expect(saved.height).toBe(400);
+        });
+    });
+
+    describe("a photograph as the shape", () => {
+        it("fills the whole picture, with the picture showing behind the words, and lets the member cut a background instead", async () => {
+            global.mockReadImage = jest.fn(() => Promise.resolve(pictureOf([0, 0, 0], { photo: true })));
+            await open();
+            await change("#suTreeShapeKind", "image");
+            await chooseFile("forest.jpg");
+            expect(document.getElementById("suTreeWhole").checked).toBe(true);
+            expect(document.getElementById("suTreeWholeLabel").hidden).toBe(false);
+            expect(document.getElementById("suTreeSense").disabled).toBe(true);
+            expect(Number(document.querySelector(".sutree-backdrop").getAttribute("opacity"))).toBeGreaterThan(0.3);
+            expect(words().length).toBeGreaterThan(5);
+            await change("#suTreeWhole", false);
+            expect(document.getElementById("suTreeWhole").checked).toBe(false);
+            expect(Number(document.querySelector(".sutree-backdrop")?.getAttribute("opacity") ?? 0)).toBeLessThan(0.3);
+        });
+
+        it("does not fill the whole of a picture that has a plain background", async () => {
+            await open();
+            await change("#suTreeShapeKind", "image");
+            await chooseFile("disc.png");
+            expect(document.getElementById("suTreeWhole").checked).toBe(false);
+            expect(document.getElementById("suTreeSense").disabled).toBe(false);
+        });
+
+        it("never fills the whole of the pictures that come with the view", async () => {
+            await open();
+            await change("#suTreeShapeKind", "wikitree-heart");
+            expect(document.getElementById("suTreeWhole").checked).toBe(false);
+        });
+    });
+
+    describe("fill the gaps", () => {
+        it("is off unless asked for", async () => {
+            global.mockOptions = { scope: "ancestors", generations: 6, degrees: 7, imagesUrl: START.imagesUrl };
+            await open();
+            expect(document.getElementById("suTreeFill").checked).toBe(false);
+            const once = words().length;
+            await change("#suTreeFill", true);
+            expect(words().length).toBeGreaterThanOrEqual(once);
         });
     });
 

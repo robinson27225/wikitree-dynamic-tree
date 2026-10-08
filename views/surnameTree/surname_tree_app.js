@@ -14,6 +14,7 @@ import {
     lookById,
     groupNames,
     hashString,
+    layoutToFill,
     layoutWords,
     scopeById,
     BANNER_FONTS,
@@ -33,6 +34,7 @@ import {
     MAX_SENSITIVITY,
     MIN_COVERAGE,
     MIN_SENSITIVITY,
+    PLAIN_EDGE_SHARE,
     backdropDataUrl,
     readImageFile,
     readImageUrl,
@@ -81,7 +83,7 @@ export function mountApp(container, key, options) {
         kind: kindById(options.names).id,
         biological: options.biological !== false,
         adoptive: options.adoptive !== false,
-        fillGaps: options.fillGaps !== false,
+        fillGaps: options.fillGaps === true, // repeats of the rarer names are for the member to ask for
         query: String(options.query || "").trim(), // what was typed for a category or a search
         seed: hashString(String(key)),
         shape: buildTree(hashString(String(key))), // what the words fill: an oak, or the shape cut out of a picture
@@ -146,6 +148,9 @@ export function mountApp(container, key, options) {
           </label>
           <label id="suTreeWhiteLabel" hidden title="Leave the white parts of the picture empty, so a white design shows as a gap">
             <input type="checkbox" id="suTreeWhite"> Leave white empty
+          </label>
+          <label id="suTreeWholeLabel" hidden title="Use all of the picture as the shape, as for a photograph, rather than cutting a background away">
+            <input type="checkbox" id="suTreeWhole"> Fill the whole picture
           </label>
           <input type="file" id="suTreeFile" accept="image/*" class="sutree-file" tabindex="-1" aria-hidden="true">
           <label>Reach <select id="suTreeScope"></select></label>
@@ -382,9 +387,19 @@ export function mountApp(container, key, options) {
                 wordColor: state.bannerWords === "one" ? state.bannerWordColor : "",
             });
         } else if (state.shapeKind !== "tree" && state.picture) {
-            shape = shapeFromPixels(state.picture.pixels, state.picture.rect, state.sensitivity, {
-                leaveWhite: state.leaveWhite,
-            });
+            const cut = (whole) =>
+                shapeFromPixels(state.picture.pixels, state.picture.rect, state.sensitivity, {
+                    leaveWhite: state.leaveWhite,
+                    whole,
+                });
+            shape = cut(state.picture.whole === true);
+            if (state.picture.whole === undefined) {
+                // a photograph, with scenery to its edges, has no background to cut away: all of it is the shape
+                state.picture.whole = shape.plainShare < PLAIN_EDGE_SHARE;
+                if (state.picture.whole) shape = cut(true);
+                find("#suTreeWhole").prop("checked", state.picture.whole);
+            }
+            find("#suTreeSense").prop("disabled", state.picture.whole === true); // nothing is cut away from a whole picture
             if (shape.coverage < MIN_COVERAGE) {
                 shape = null;
                 state.shapeNote =
@@ -398,15 +413,18 @@ export function mountApp(container, key, options) {
         if (shape.kind !== "banner") shape.look = state.look;
         state.shape = shape;
         fillSizes();
-        state.items = layoutWords({
+        const layoutArgs = {
             words: state.words,
             measure: makeMeasure(),
-            random: seededRandom(state.seed),
             fillGaps: state.fillGaps,
             masks: shape.kind === "image" || shape.kind === "banner" ? shape.masks : buildMasks(shape),
             look: shape.kind === "banner" ? "flat" : state.look, // the banner's words are packed tightly
             fonts: shape.kind === "banner" ? BANNER_FONTS : undefined,
-        });
+        };
+        // a whole picture (a photograph) is filled right up, with the names as big as will let every one fit
+        state.items = shape.whole
+            ? layoutToFill({ ...layoutArgs, makeRandom: () => seededRandom(state.seed) })
+            : layoutWords({ ...layoutArgs, random: seededRandom(state.seed) });
         // every word one colour, when the member chose one for the banner
         if (shape.kind === "banner" && shape.wordColor) state.items.forEach((item) => (item.color = shape.wordColor));
         // a word in a picture's shape has the colour of the picture under it
@@ -510,6 +528,8 @@ export function mountApp(container, key, options) {
         find("#suTreeLook").prop("disabled", banner);
         find(".sutree-stage").toggleClass("sutree-banner", banner);
         find("#suTreeWhite").prop("checked", state.leaveWhite);
+        find("#suTreeWholeLabel").prop("hidden", kind === "tree" || banner);
+        find("#suTreeWhole").prop("checked", !!(state.picture && state.picture.whole));
         if (kind === "image" && state.mine) {
             find("#suTreeChoose").attr("title", `Using ${state.mine.name}. Choose another picture`);
         }
@@ -536,6 +556,7 @@ export function mountApp(container, key, options) {
                 state.pictures[picture.id] = {
                     ...(await readImageUrl(state.imagesUrl + picture.file)),
                     name: picture.name,
+                    whole: false, // the pictures that come with the view are designs with a background to cut away
                 };
             }
             state.picture = state.pictures[picture.id];
@@ -600,6 +621,10 @@ export function mountApp(container, key, options) {
     });
     // the file chooser was closed without a choice
     find("#suTreeFile").on("cancel", () => setShapeKind(state.shapeKind));
+    find("#suTreeWhole").on("change", (e) => {
+        if (state.picture) state.picture.whole = e.target.checked;
+        redraw();
+    });
     find("#suTreeWhite").on("change", (e) => {
         state.leaveWhite = e.target.checked;
         redraw();
