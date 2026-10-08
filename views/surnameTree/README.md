@@ -60,6 +60,11 @@ left. A photograph has scenery to its edges, so there is nothing to cut away: th
 every name fit, with the picture showing behind them, and **Fill the whole picture** is ticked for you. Untick it to cut a
 background away instead (the **Cut-out** slider then works). The pictures that come with the app always have a background.
 
+**Close fitting.** Names are laid out on a fine grid (2 pixels a cell) and take up the room of their letters, not of the box round
+them, so a short name can sit inside the O or the D of a long one. A name is tried at sizes down to a very small one before it is
+left out, and at most 1,500 names are tried. With a very long list the biggest names are made smaller, so that more of the names
+fit, rather than leaving the rare ones out.
+
 **Names that did not fit.** Every name is tried again in any gap, in smaller type, before it is left out. The note under the tree
 says how many were left out: one to three are named in it, and for more there is a **See the list** link, which opens a list of
 them with how many profiles each has. Click one in the list to see its people.

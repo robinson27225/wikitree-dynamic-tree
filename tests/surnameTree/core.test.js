@@ -533,13 +533,13 @@ describe("layoutWords", () => {
 describe("every surname gets a place if there is room anywhere", () => {
     // a heart-shaped region, as a picture of a heart would give
     const heart = () => {
-        const cols = 250;
-        const rows = 220;
+        const cols = Math.round(1000 / CELL);
+        const rows = Math.round(880 / CELL);
         const crown = new Uint8Array(cols * rows);
         for (let r = 0; r < rows; r++)
             for (let c = 0; c < cols; c++) {
-                const x = (c - 125) / 95;
-                const y = -(r - 100) / 95;
+                const x = (c * CELL - 500) / 380;
+                const y = -(r * CELL - 400) / 380;
                 if ((x * x + y * y - 1) ** 3 - x * x * y ** 3 < 0) crown[r * cols + c] = 1;
             }
         return { cols, rows, crown, trunk: new Uint8Array(cols * rows) };
@@ -1086,36 +1086,88 @@ describe("the wide banner", () => {
 });
 
 describe("names as big as will let every one fit", () => {
-    const masks = buildMasks(buildTree(5));
-    const words = Array.from({ length: 30 }, (_, i) => ({
+    // a plain rectangle of shape, so that each layout is quick
+    const cols = Math.round(440 / CELL);
+    const rows = Math.round(360 / CELL);
+    const masks = { cols, rows, crown: new Uint8Array(cols * rows).fill(1), trunk: new Uint8Array(cols * rows) };
+    const words = Array.from({ length: 12 }, (_, i) => ({
         text: `NAME${i}${"X".repeat(i % 4)}`,
-        count: Math.max(1, 30 - i),
+        count: Math.max(1, 12 - i),
     }));
     const args = { words, measure, masks, fillGaps: false, look: "flat", makeRandom: () => seededRandom(2) };
 
     it("makes the names bigger than usual when there is room, and still places every one", () => {
-        const usual = layoutWords({ words, measure, masks, fillGaps: false, look: "flat", random: seededRandom(2) });
+        const usual = layoutWords({ ...args, random: seededRandom(2) });
         const filled = layoutToFill(args);
         expect(new Set(filled.map((i) => i.text)).size).toBe(words.length);
         expect(Math.min(...filled.map((i) => i.size))).toBeGreaterThan(Math.min(...usual.map((i) => i.size)));
         const area = (items) => items.reduce((n, i) => n + i.w * i.h, 0);
         expect(area(filled)).toBeGreaterThan(area(usual) * 1.05);
     });
+});
 
-    it("keeps the usual size when the shape is already crowded", () => {
-        const many = Array.from({ length: 300 }, (_, i) => ({
-            text: `NAME${i}${"X".repeat(i % 6)}`,
-            count: Math.max(1, 40 - i),
-        }));
-        const usual = layoutWords({
-            words: many,
-            measure,
-            masks,
-            fillGaps: false,
-            look: "flat",
-            random: seededRandom(2),
-        });
-        const filled = layoutToFill({ ...args, words: many });
-        expect(filled.length).toBe(usual.length);
+describe("names inside the letters of bigger names", () => {
+    const cols = Math.round(1000 / CELL);
+    const rows = Math.round(880 / CELL);
+    const masks = { cols, rows, crown: new Uint8Array(cols * rows).fill(1), trunk: new Uint8Array(cols * rows) };
+    // a stand-in for the letters of BIG: a hollow ring of cells round its middle, as an O or a D is (200 x 100 pixels, 8 thick)
+    const ring = (text, size) => {
+        if (text !== "BIG") return null;
+        const across = Math.round(100 / CELL);
+        const down = Math.round(50 / CELL);
+        const thick = Math.round(8 / CELL);
+        const cells = [];
+        for (let dr = -down; dr <= down; dr++)
+            for (let dc = -across; dc <= across; dc++) {
+                const edge = Math.abs(dr) > down - thick || Math.abs(dc) > across - thick;
+                if (edge) cells.push([dc, dr]);
+            }
+        return cells;
+    };
+    const words = [
+        { text: "BIG", count: 20 },
+        { text: "TINY", count: 1 },
+    ];
+    const run = (ink) =>
+        layoutWords({ words, measure, random: seededRandom(1), masks, look: "flat", fillGaps: false, ink });
+
+    it("lets a small name go in the middle of a big one when only the big one's letters are taken", () => {
+        const items = run(ring);
+        const big = items.find((i) => i.text === "BIG");
+        const tiny = items.find((i) => i.text === "TINY");
+        expect(Math.abs(tiny.x - big.x)).toBeLessThan(big.w / 2);
+        expect(Math.abs(tiny.y - big.y)).toBeLessThan(big.h / 2);
+    });
+
+    it("keeps the small name out of the big one's box when the whole box is taken, as before", () => {
+        const items = run(null);
+        const big = items.find((i) => i.text === "BIG");
+        const tiny = items.find((i) => i.text === "TINY");
+        const inside = Math.abs(tiny.x - big.x) < big.w / 2 && Math.abs(tiny.y - big.y) < big.h / 2;
+        expect(inside).toBe(false);
+    });
+
+    it("falls back to the box when the page cannot say where the letters are", () => {
+        const items = run(() => null);
+        expect(items).toHaveLength(2);
+    });
+});
+
+describe("names as big as will fit, and no bigger", () => {
+    const cols = Math.round(440 / CELL);
+    const rows = Math.round(360 / CELL);
+    const masks = { cols, rows, crown: new Uint8Array(cols * rows).fill(1), trunk: new Uint8Array(cols * rows) };
+    const crowded = Array.from({ length: 130 }, (_, i) => ({
+        text: `NAME${i}${"X".repeat(i % 7)}`,
+        count: Math.max(1, Math.round(60 / (i + 1))),
+    }));
+    const args = { words: crowded, measure, masks, fillGaps: false, look: "flat", makeRandom: () => seededRandom(2) };
+
+    it("makes the names smaller when there are too many to fit at the usual size, so that more of them fit", () => {
+        const usual = layoutWords({ ...args, random: seededRandom(2) });
+        const filled = layoutToFill(args);
+        const distinct = (items) => new Set(items.map((i) => i.text)).size;
+        expect(distinct(filled)).toBeGreaterThan(distinct(usual));
+        expect(Math.max(...filled.map((i) => i.size))).toBeLessThan(Math.max(...usual.map((i) => i.size)));
     });
 });

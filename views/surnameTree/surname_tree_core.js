@@ -7,7 +7,9 @@ Created By: Azure Robinson (Robinson-27225)
 
 export const WIDTH = 1000;
 export const HEIGHT = 880;
-export const CELL = 4; // the layout grid is CELL logical pixels per cell
+export const CELL = 2; // the layout grid is CELL logical pixels per cell: fine enough for the smallest names to sit close together
+/** How many of a cell the spiral search steps over, so that it covers the shape as quickly whatever the cell size: 1 for cells of 4 pixels. */
+const STEP = 4 / CELL;
 
 /** Capital letters are about this tall compared with the font size; the layout reserves a box of this height. */
 const CAP_HEIGHT = 0.8;
@@ -867,13 +869,15 @@ function centroid(mask, cols) {
 // ---------------------------------------------------------------------------------------------
 
 /** The most surnames laid out, and how many in a row may fail to fit before the rest are given up on. */
-export const MAX_WORDS = 600;
+export const MAX_WORDS = 1500;
 const MAX_MISSES = 15;
 /** The rescue pass for names that found no room: it starts no bigger than RESCUE_START, may go as small as RESCUE_MIN_FONT, and gives up after this many in a row. */
-const RESCUE_START = 14;
+const RESCUE_START = 9;
 const RESCUE_MIN_FONT = 6;
-/** The space left round a name placed in the rescue pass, in cells (about 2 pixels): as close as in a word cloud made in WordArt, so that more of the names fit. */
+/** The space left round a name placed in the rescue pass, in cells (a pixel): as close as in a word cloud made in WordArt, so that more of the names fit. */
 const RESCUE_GAP = 0.5;
+/** Names smaller than this take up their whole box, as there is nothing smaller to go in the gaps of their letters. */
+const INK_MIN_FONT = 14;
 const MAX_RESCUE_MISSES = 150;
 
 export const MAX_FONT = 118;
@@ -982,6 +986,9 @@ export function wordCells(item) {
  * masks:   from buildMasks(tree), or made from a picture (see surname_tree_image.js)
  * look:    "shaded" or "flat" (see LOOKS): how tightly the words are packed and how small they may become
  * fonts:    { maxFont, minFont } for the biggest and the rarest names, where the shape is not as tall as the tree (the banner)
+ * ink:      (text, size, angle, pad) => the cells the letters themselves cover, as boxOffsets gives for a box (see inkOffsets in
+ *           surname_tree_draw.js). Where given, a placed name takes up only its letters' room, so smaller names can go in the
+ *           middles of its O, D and so on. Without it a name takes up its whole box.
  * Returns [{ text, count, region: "crown" | "trunk", x, y, size, angle, w, h, rank }] where x, y is the middle of the
  * word, angle its turn in degrees, and w, h the size of its box before turning.
  */
@@ -993,6 +1000,7 @@ export function layoutWords({
     masks = buildMasks(),
     look = "shaded",
     fonts = {},
+    ink = null,
 }) {
     const tune = lookById(look);
     const { cols, rows } = masks;
@@ -1004,6 +1012,7 @@ export function layoutWords({
     Object.values(regions).forEach((region) => (region.empty = !region.mask.includes(1)));
     const taken = new Uint8Array(cols * rows);
     const placed = [];
+    const reachAcross = Math.hypot(cols, rows) * CELL; // the longest a name can be and still fit, turned to the slant
 
     /** Whether a word whose middle is the cell (col, row) fits: every cell it covers is in the region and free. */
     const fits = (region, col, row, cover) => {
@@ -1035,8 +1044,8 @@ export function layoutWords({
             const col = Math.round(region.col + r * Math.cos(theta) * region.stretchX);
             const row = Math.round(region.row + r * Math.sin(theta) * region.stretchY);
             if (fits(region, col, row, cover)) return { col, row };
-            theta += 1.6 / Math.max(r, 3);
-            r += (3 / (Math.PI * 2)) * (1.6 / Math.max(r, 3));
+            theta += (1.6 * STEP) / Math.max(r, 3 * STEP);
+            r += ((3 * STEP) / (Math.PI * 2)) * ((1.6 * STEP) / Math.max(r, 3 * STEP));
             if (r > cols) break;
         }
         return null;
@@ -1048,7 +1057,7 @@ export function layoutWords({
      */
     const findSpotInGaps = (region, cover) => {
         const pool = region.pool;
-        for (let tries = 0; tries < 250 && pool.length; tries++) {
+        for (let tries = 0; tries < 160 && pool.length; tries++) {
             const at = Math.floor(random() * pool.length);
             const cell = pool[at];
             if (taken[cell]) {
@@ -1078,12 +1087,18 @@ export function layoutWords({
         let fontSize = size;
         while (fontSize >= smallest) {
             const w = measure(word.text, fontSize);
+            if (w > reachAcross) {
+                // longer than the shape is across, at any angle: smaller type is the only hope
+                fontSize = Math.floor(fontSize * tune.shrink);
+                continue;
+            }
             const h = fontSize * CAP_HEIGHT;
             const cover = boxOffsets(w, h, angle, CELL * 0.5);
             const spot = inGaps ? findSpotInGaps(region, cover) : findSpot(region, cover);
             if (spot) {
                 // a gap of one more cell round the word keeps the next one from touching it
-                occupy(spot.col, spot.row, boxOffsets(w, h, angle, CELL * gap));
+                const inkCells = ink && fontSize >= INK_MIN_FONT ? ink(word.text, fontSize, angle, CELL * gap) : null;
+                occupy(spot.col, spot.row, inkCells || boxOffsets(w, h, angle, CELL * gap));
                 const item = {
                     text: word.text,
                     count: word.count,
@@ -1185,32 +1200,50 @@ export function layoutWords({
     return placed;
 }
 
-/** The sizes tried, from the usual one up, when the names are to fill a shape (see layoutToFill). */
-const FILL_SCALES = [1, 1.3, 1.65, 2.05, 2.5];
+/** The sizes tried (as a share of the usual) when the names are to fill a shape: bigger ones if there is room, smaller if not. */
+const FILL_SCALES = [0.25, 0.35, 0.5, 0.7, 1, 1.3, 1.65, 2.05, 2.5];
+/** Where to start in FILL_SCALES: the more names there are, the smaller they have to be, so a long list starts smaller. */
+const fillStart = (count) => (count > 600 ? 2 : count > 250 ? 3 : 4);
 
 /**
- * layoutWords, but with the names made as big as will still let every one of them fit, so that they fill the shape (a photograph,
- * say) and do not huddle in the middle of it. The usual sizes are tried first, then bigger ones, and the biggest that places
- * every name (or nearly) is kept. Takes what layoutWords takes, but `makeRandom()` in place of `random`: it gives a fresh random
- * function (a seeded one, say) for each try, so that every try is the same layout but for the size.
+ * layoutWords, but with the names as big as will still let every one of them fit, so that they fill the shape (a photograph,
+ * say) and do not huddle in the middle of it, and not so big that the rarer ones are crowded out. A size is tried (the usual
+ * one for a short list, smaller for a long one). If every name (or nearly) fits, bigger ones are tried and the biggest that
+ * still fits is kept; if not, smaller ones are tried until they do (or, failing that, the size that places the most). Takes
+ * what layoutWords takes, but `makeRandom()` in place of `random`: it gives a fresh random function (a seeded one, say) for
+ * each try, so that every try is the same layout but for the size.
  */
 export function layoutToFill({ makeRandom, fonts = {}, ...rest }) {
-    const wanted = rest.words.length;
+    const need = Math.ceil(rest.words.length * 0.97);
     const distinct = (items) => new Set(items.map((item) => item.text)).size;
-    let best = null;
-    for (const scale of FILL_SCALES) {
-        const items = layoutWords({
+    const run = (scale) =>
+        layoutWords({
             ...rest,
             random: makeRandom(),
             fonts: {
                 maxFont: Math.round((fonts.maxFont || MAX_FONT) * scale),
-                minFont: Math.round((fonts.minFont || 14) * scale),
+                minFont: Math.max(6, Math.round((fonts.minFont || 14) * scale)),
             },
         });
-        const crowded = distinct(items) < Math.ceil(wanted * 0.97);
-        if (best && crowded) break; // too big: keep the last size that fitted
-        best = items;
-        if (crowded) break; // already crowded at the usual size, so nothing bigger would help
+    const start = fillStart(rest.words.length);
+    let best = run(FILL_SCALES[start]);
+    let bestCount = distinct(best);
+    if (bestCount >= need) {
+        for (let at = start + 1; at < FILL_SCALES.length; at++) {
+            const items = run(FILL_SCALES[at]);
+            if (distinct(items) < need) break; // too big: keep the last size that fitted
+            best = items;
+        }
+        return best;
+    }
+    for (let at = start - 1; at >= 0; at--) {
+        const items = run(FILL_SCALES[at]);
+        const count = distinct(items);
+        if (count > bestCount) {
+            best = items;
+            bestCount = count;
+        }
+        if (count >= need) break;
     }
     return best;
 }
