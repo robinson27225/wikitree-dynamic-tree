@@ -38,6 +38,7 @@ import {
     groupSurnames,
     kindById,
     namesOf,
+    splitSurnames,
     splitNames,
     hashString,
     layoutWords,
@@ -1202,5 +1203,84 @@ describe("names as big as will fit, and no bigger", () => {
         const distinct = (items) => new Set(items.map((i) => i.text)).size;
         expect(distinct(filled)).toBeGreaterThan(distinct(usual));
         expect(Math.max(...filled.map((i) => i.size))).toBeLessThan(Math.max(...usual.map((i) => i.size)));
+    });
+});
+
+describe("two surnames in one field, and names with a prefix", () => {
+    it("counts two surnames, joined by a space, a hyphen or a comma, each on its own", () => {
+        expect(splitSurnames("Blanco Chavez")).toEqual(["BLANCO", "CHAVEZ"]);
+        expect(splitSurnames("Diego-Smith")).toEqual(["DIEGO", "SMITH"]);
+        expect(splitSurnames("Smith-Jones-Brown")).toEqual(["SMITH", "JONES", "BROWN"]);
+        expect(splitSurnames("Smith, Jones")).toEqual(["SMITH", "JONES"]);
+        expect(splitSurnames("Garcia y Lopez")).toEqual(["GARCIA", "LOPEZ"]);
+        expect(splitSurnames("Smith and Jones")).toEqual(["SMITH", "JONES"]);
+    });
+
+    it("keeps a prefix with its name, so these are one surname each", () => {
+        expect(splitSurnames("O'Brien")).toEqual(["O'BRIEN"]);
+        expect(splitSurnames("O' Brien")).toEqual(["O'BRIEN"]);
+        expect(splitSurnames("O Brien")).toEqual(["O BRIEN"]);
+        expect(splitSurnames("D'Angelo")).toEqual(["D'ANGELO"]);
+        expect(splitSurnames("van der Berg")).toEqual(["VAN DER BERG"]);
+        expect(splitSurnames("Van Der Berg")).toEqual(["VAN DER BERG"]);
+        expect(splitSurnames("van Dam")).toEqual(["VAN DAM"]);
+        expect(splitSurnames("de la Cruz")).toEqual(["DE LA CRUZ"]);
+        expect(splitSurnames("Di Caprio")).toEqual(["DI CAPRIO"]);
+        expect(splitSurnames("Mc Kay")).toEqual(["MC KAY"]);
+        expect(splitSurnames("Mac Donald")).toEqual(["MAC DONALD"]);
+        expect(splitSurnames("McKay")).toEqual(["MCKAY"]);
+        expect(splitSurnames("St. John")).toEqual(["ST. JOHN"]);
+        expect(splitSurnames("Saint-Pierre")).toEqual(["SAINT-PIERRE"]);
+        expect(splitSurnames("ben David")).toEqual(["BEN DAVID"]);
+        expect(splitSurnames("Fitz Gerald")).toEqual(["FITZ GERALD"]);
+        expect(splitSurnames("ap Rhys")).toEqual(["AP RHYS"]);
+        expect(splitSurnames("Ó Briain")).toEqual(["Ó BRIAIN"]);
+    });
+
+    it("splits two surnames even when one of them has a prefix", () => {
+        expect(splitSurnames("Smith van der Berg")).toEqual(["SMITH", "VAN DER BERG"]);
+        expect(splitSurnames("Perez de Castro")).toEqual(["PEREZ", "DE CASTRO"]);
+        expect(splitSurnames("Di Caprio-Smith")).toEqual(["DI CAPRIO", "SMITH"]);
+        expect(splitSurnames("Hart Mc Kay")).toEqual(["HART", "MC KAY"]);
+        expect(splitSurnames("Smith-van Dam")).toEqual(["SMITH", "VAN DAM"]);
+    });
+
+    it("leaves out initials, values that stand for nobody and repeats", () => {
+        expect(splitSurnames("Unknown")).toEqual([]);
+        expect(splitSurnames("(Smith)")).toEqual([]);
+        expect(splitSurnames("Smith J")).toEqual(["SMITH"]);
+        expect(splitSurnames("Smith Smith")).toEqual(["SMITH"]);
+        expect(splitSurnames("Smith-")).toEqual(["SMITH"]);
+        expect(splitSurnames("-")).toEqual([]);
+        expect(splitSurnames("")).toEqual([]);
+        expect(splitSurnames(null)).toEqual([]);
+        expect(splitSurnames("1850")).toEqual([]);
+    });
+
+    it("counts a person once under each of their surnames, using the current one only when there is no birth surname", () => {
+        expect(namesOf({ LastNameAtBirth: "Blanco Chavez", LastNameCurrent: "Smith" }, "surname")).toEqual([
+            "BLANCO",
+            "CHAVEZ",
+        ]);
+        expect(namesOf({ LastNameAtBirth: "", LastNameCurrent: "Diego-Smith" }, "surname")).toEqual(["DIEGO", "SMITH"]);
+        const groups = groupNames(
+            [
+                { person: { Id: 1, LastNameAtBirth: "Blanco Chavez" }, bio: true },
+                { person: { Id: 2, LastNameAtBirth: "Chavez" }, bio: true },
+                { person: { Id: 3, LastNameAtBirth: "O'Brien" }, bio: true },
+                { person: { Id: 4, LastNameAtBirth: "van der Berg" }, bio: true },
+            ],
+            "surname"
+        );
+        expect(groups.map((g) => [g.text, g.count])).toEqual([
+            ["CHAVEZ", 2],
+            ["BLANCO", 1],
+            ["O'BRIEN", 1],
+            ["VAN DER BERG", 1],
+        ]);
+    });
+
+    it("does not change how first and middle names are split: Mary-Ann is still one name", () => {
+        expect(namesOf({ FirstName: "Mary-Ann Jo" }, "first")).toEqual(["MARY-ANN", "JO"]);
     });
 });
