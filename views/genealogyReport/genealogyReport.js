@@ -18,6 +18,7 @@ import { ReportFetchError, completeReportData, fetchReportData } from "./report_
 import { buildReportModel } from "./report_model.js";
 import { sanitizeBio } from "./report_bio.js";
 import { esc, renderReport } from "./report_render.js";
+import { AiPanel, aiPanelHtml } from "./report_ai_panel.js";
 
 // What goes into the report, and how it is shown. Each is a checkbox named after its option.
 const CONTENT_CHECKBOXES = [
@@ -33,6 +34,8 @@ const DISPLAY_CHECKBOXES = [
     ["showWtIds", "WikiTree IDs"],
     ["showRelationship", "Relationship (grandfather, …)"],
     ["showPath", "Path from the subject"],
+    ["showStatus", "Research status and relationship confidence"],
+    ["showConfident", "Mark Confident relationships too (✓)"],
 ];
 // Sections that reproduce a Tree App for the generations chosen.
 const SECTION_CHECKBOXES = [
@@ -41,7 +44,9 @@ const SECTION_CHECKBOXES = [
     ["sectionCalendar", "Family calendar"],
     ["sectionSurnames", "Surnames list"],
 ];
-const CHECKBOXES = [...CONTENT_CHECKBOXES, ...DISPLAY_CHECKBOXES, ...SECTION_CHECKBOXES];
+// An AI-written overview in a separate panel (never part of the report or the printout).
+const AI_CHECKBOXES = [["aiOverview", "AI overview (separate panel)"]];
+const CHECKBOXES = [...CONTENT_CHECKBOXES, ...DISPLAY_CHECKBOXES, ...SECTION_CHECKBOXES, ...AI_CHECKBOXES];
 
 const HASH_KEYS = [
     "generations",
@@ -118,6 +123,7 @@ window.GenealogyReportView = class GenealogyReportView extends View {
         this.statusEl = this.container.querySelector(".gr-status");
         this.reportEl = this.container.querySelector(".gr-output");
         this.form = this.container.querySelector(".gr-form");
+        this.ai = new AiPanel(this.container.querySelector(".gr-ai-panel"));
 
         this.form.addEventListener("submit", (event) => {
             event.preventDefault();
@@ -138,6 +144,7 @@ window.GenealogyReportView = class GenealogyReportView extends View {
 
     close() {
         this.runId = (this.runId || 0) + 1; // abandons any run still in flight
+        this.ai?.dispose(); // forgets the API key, if one was pasted
         if (this.container) {
             this.container.classList.remove("genealogyReportView");
             this.container.innerHTML = "";
@@ -169,6 +176,10 @@ ${SECTION_CHECKBOXES.map(checkbox).join("")}
 ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, String(options.fanAngle))}
 </div>
 <div class="gr-form-row">
+<span class="gr-form-label">AI:</span>
+${AI_CHECKBOXES.map(checkbox).join("")}
+</div>
+<div class="gr-form-row">
 <button type="submit" class="btn btn-primary gr-generate">Generate</button>
 <button type="button" class="btn gr-cancel" hidden>Cancel</button>
 <button type="button" class="btn gr-print" disabled>Print / Save as PDF</button>
@@ -176,6 +187,7 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
 </div>
 </form>
 <p class="gr-status" role="status" aria-live="polite"></p>
+${aiPanelHtml()}
 <div class="gr-output"></div>`;
     }
 
@@ -198,6 +210,7 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
         this.form.elements.includeSources.disabled = !bioOn;
         this.form.elements.includeBioImages.disabled = !bioOn;
         this.form.elements.hideStickers.disabled = !bioOn;
+        this.form.elements.showConfident.disabled = !this.form.elements.showStatus.checked;
         this.form.elements.fanAngle.disabled = !this.form.elements.sectionFan.checked;
         this.updateEstimate();
     }
@@ -271,6 +284,7 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
         this.reportEl.innerHTML = renderReport(model, { generatedOn });
         this.statusEl.textContent = `Done: ${model.stats.uniqueAncestors} ancestors in ${model.generations} generations.`;
         this.container.querySelector(".gr-print").disabled = false;
+        this.currentModel = model;
         return true;
     }
 
@@ -290,6 +304,7 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
         this.bioCache = new Map();
         this.state = null;
 
+        this.ai.reset(); // an overview belongs to the report it was written for
         this.setBusy(true);
         this.reportEl.innerHTML = "";
         try {
@@ -303,7 +318,10 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
             });
             if (state.cancelled || !isCurrent()) return;
             this.state = state;
-            await this.renderFromState(isCurrent);
+            if (await this.renderFromState(isCurrent)) {
+                // The overview becomes available now that the report has finished loading.
+                this.ai.update({ model: this.currentModel, options: this.options, auto: true });
+            }
         } catch (error) {
             if (isCurrent()) this.reportFailed(error);
         } finally {
@@ -336,6 +354,8 @@ ${select("fanAngle", "Fan shape", ["180", "240", "360"], FAN_ANGLE_LABELS, Strin
             if (result.cancelled || !isCurrent()) return;
             if (await this.renderFromState(isCurrent)) {
                 (anchorId && document.getElementById(anchorId))?.scrollIntoView({ block: "center" });
+                // Other parents were chosen, so any overview already written no longer matches the report.
+                this.ai.update({ model: this.currentModel, options: this.options, changed: true });
             }
         } catch (error) {
             if (!isCurrent()) return;

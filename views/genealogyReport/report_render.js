@@ -7,9 +7,10 @@
 
 import { countryOf, formatDate, formatLifespan } from "./report_dates.js";
 import { compressRanges, generationOf, pathNumbers, relationshipLabel } from "./report_model.js";
-import { dateStyleOf } from "./report_options.js";
+import { REPORT_VERSION, dateStyleOf } from "./report_options.js";
 import { WIKITREE_URL, entryId, esc, slotLink, wikiTreeLink } from "./report_html.js";
 import { fanChartHtml } from "./report_fan.js";
+import { CONFIDENT, RELATIONSHIP_STATUS, RESEARCH_STATUS, isMarked, researchStatusOf } from "./report_status.js";
 import { calendarHtml, statisticsHtml, surnamesHtml } from "./report_sections.js";
 
 export { esc };
@@ -35,11 +36,49 @@ function marriageText(rel, ctx) {
     return text ? `m. ${text}` : "";
 }
 
+// ---- research status and relationship confidence ---------------------------------------------------------------------
+// Text badges (not colour alone), so they still read on a black and white printout.
+
+// A parent-child link. Confident, the normal case, is marked with a check (as on WikiTree's own tree views) unless the
+// reader turned that off; the other statuses are always marked.
+function linkBadge(status, ctx, text) {
+    if (!ctx.showStatus || !status) return "";
+    const isConfident = status.code === CONFIDENT;
+    if (isConfident && !ctx.showConfident) return "";
+    if (!isConfident && !isMarked(status.code)) return "";
+    const label = text || status.label;
+    return `<span class="gr-badge gr-rel gr-rel-${status.code}" title="${esc(status.meaning)}">${isConfident ? "\u2713 " : ""}${esc(label)}</span>`;
+}
+
+// A marriage: uncertain is always marked, confident only if Confident marks are on.
+function marriageBadge(status, ctx) {
+    if (!ctx.showStatus || !status) return "";
+    if (status.code === 10) {
+        return `<span class="gr-badge gr-rel gr-rel-10" title="${esc(RELATIONSHIP_STATUS[10].meaning)}">Marriage uncertain</span>`;
+    }
+    if (status.code === CONFIDENT && ctx.showConfident) {
+        return `<span class="gr-badge gr-rel gr-rel-20" title="${esc(RELATIONSHIP_STATUS[20].meaning)}">\u2713 Marriage confident</span>`;
+    }
+    return "";
+}
+
+function researchBadge(code, ctx) {
+    const status = ctx.showStatus ? researchStatusOf(code) : null;
+    if (!status) return "";
+    return `<span class="gr-badge gr-rs gr-rs-${status.code}" title="Research status: ${esc(status.meaning)}">${esc(status.label)}</span>`;
+}
+
 // One relative in a Family row: a link to their entry if they are on the direct line, else to their profile.
 function relativeHtml(rel, ctx, { showKind = false, showMarriage = false } = {}) {
     const linkTag = rel.link ? (rel.link === "adoptive" ? "adopted" : "biological child") : "";
+    const badges = [linkBadge(rel.linkStatus, ctx), marriageBadge(rel.relationship, ctx)].filter(Boolean).join(" ");
     if (rel.slot) {
-        return `${esc(rel.name || "")} ${slotLink(rel.slot)}${linkTag ? ` <small>(${linkTag})</small>` : ""}`.trim();
+        return [
+            `${esc(rel.name || "")} ${slotLink(rel.slot)}${linkTag ? ` <small>(${linkTag})</small>` : ""}`.trim(),
+            badges,
+        ]
+            .filter(Boolean)
+            .join(" ");
     }
     const life = formatLifespan(rel.birthDate, rel.deathDate);
     const extra = [
@@ -49,7 +88,7 @@ function relativeHtml(rel, ctx, { showKind = false, showMarriage = false } = {})
     ]
         .filter(Boolean)
         .join("; ");
-    return [wikiTreeLink(rel.wtId, rel.name), life && esc(life), extra && `<small>(${esc(extra)})</small>`]
+    return [wikiTreeLink(rel.wtId, rel.name), life && esc(life), extra && `<small>(${esc(extra)})</small>`, badges]
         .filter(Boolean)
         .join(" ");
 }
@@ -58,8 +97,12 @@ function relativeHtml(rel, ctx, { showKind = false, showMarriage = false } = {})
 function relativeList(list, ctx, options) {
     if (!list.length) return "";
     const shown = list.filter((rel) => !rel.hidden).map((rel) => relativeHtml(rel, ctx, options));
-    const hiddenCount = list.length - shown.length;
-    if (hiddenCount) shown.push(`${hiddenCount} living or private`);
+    // Someone who came back with no name is private (or living and hidden); someone who did not come back at all is
+    // simply not available, which is not the same thing.
+    const hidden = list.filter((rel) => rel.hidden);
+    const notRetrieved = hidden.filter((rel) => rel.reason === "missing").length;
+    if (hidden.length - notRetrieved) shown.push(`${hidden.length - notRetrieved} living or private`);
+    if (notRetrieved) shown.push(`${notRetrieved} not retrieved`);
     return shown.join("; ");
 }
 
@@ -67,7 +110,8 @@ function familyHtml(family, ctx) {
     if (!family) return "";
     const rows = [];
     const parents = family.parents.map(
-        (p) => `${p.role === "father" ? "Father" : "Mother"}: ${p.hidden ? "living or private" : relativeHtml(p, ctx)}`
+        (p) =>
+            `${p.role === "father" ? "Father" : "Mother"}: ${p.hidden ? (p.reason === "missing" ? "not retrieved" : "living or private") : relativeHtml(p, ctx)}`
     );
     const parentsLabel =
         family.parentsMode === "bio"
@@ -80,7 +124,12 @@ function familyHtml(family, ctx) {
         const detail = marriageText(family.directSpouse, ctx);
         rows.push([
             "Married to",
-            `${slotLink(family.directSpouse.slot)}${detail ? ` <small>(${esc(detail)})</small>` : ""}`,
+            [
+                `${slotLink(family.directSpouse.slot)}${detail ? ` <small>(${esc(detail)})</small>` : ""}`,
+                marriageBadge(family.directSpouse.relationship, ctx),
+            ]
+                .filter(Boolean)
+                .join(" "),
         ]);
     }
     const partners = relativeList(family.partners, ctx, { showMarriage: true });
@@ -132,6 +181,19 @@ function headingHtml(entry, ctx) {
     }${relationship ? ` <span class="gr-relationship">${esc(relationship)}</span>` : ""}</h3>`;
 }
 
+// Research status of the profile, and how sure its link is to the person below it on the line.
+function statusBadgesHtml(entry, ctx) {
+    const badges = [
+        researchBadge(entry.person.researchStatus, ctx),
+        linkBadge(
+            entry.linkStatus,
+            ctx,
+            entry.linkStatus && `${entry.linkStatus.label} relationship to #${Math.floor(entry.n / 2)}`
+        ),
+    ].filter(Boolean);
+    return badges.length ? `<p class="gr-badges">${badges.join(" ")}</p>` : "";
+}
+
 // Switch between the parents the profile lists and the biological ones. Screen only: print shows the chosen line,
 // labelled in the Family block.
 function parentToggleHtml(entry) {
@@ -166,6 +228,7 @@ function entryHtml(entry, ctx) {
         person.photoUrl && entry.showPortrait ? `<img class="gr-portrait" src="${esc(person.photoUrl)}" alt="">` : "";
     return `<section class="gr-entry" id="${id}">
 ${portrait}${headingHtml(entry, ctx)}
+${statusBadgesHtml(entry, ctx)}
 ${parentToggleHtml(entry)}
 ${person.currentName ? `<p class="gr-vital"><em>later known as</em> ${esc(person.currentName)}</p>` : ""}
 ${vitals(person, ctx)}
@@ -175,7 +238,29 @@ ${bioHtml(entry)}
 </section>`;
 }
 
-function summaryHtml(model) {
+function statusSummaryHtml(stats) {
+    const research = Object.entries(stats.researchCounts)
+        .map(([code, count]) => [Number(code), count])
+        .sort((a, b) => b[0] - a[0])
+        .map(([code, count]) => `${esc(RESEARCH_STATUS[code]?.label || "No status set")} ${count}`);
+    const links = Object.entries(stats.linkCounts)
+        .map(([code, count]) => [Number(code), count])
+        .sort((a, b) => b[0] - a[0])
+        .map(([code, count]) => `${esc(RELATIONSHIP_STATUS[code]?.label || code)} ${count}`);
+    const check = stats.uncertainLinks.length
+        ? `<p class="gr-research-note"><strong>Check these links:</strong> the relationship to the person below is Uncertain or Non-biological at ${stats.uncertainLinks
+              .map(slotLink)
+              .join(", ")}. Take care with anything further back on those lines.</p>`
+        : "";
+    const dna = stats.dnaLinks.length
+        ? `<p>Relationships confirmed with DNA at ${stats.dnaLinks.map(slotLink).join(", ")}.</p>`
+        : "";
+    return `<h3>Research status and relationship confidence</h3>
+<p>Research status of the ancestors: ${research.join(", ") || "none"}.</p>
+<p>Relationships on the direct line: ${links.join(", ") || "none recorded"}.</p>${dna}${check}`;
+}
+
+function summaryHtml(model, ctx) {
     const { stats } = model;
     const years =
         stats.earliestBirthYear && stats.latestBirthYear
@@ -189,10 +274,11 @@ function summaryHtml(model) {
     const rows = stats.byGeneration
         .map((g) => `<tr><td>Generation ${g.gen}</td><td>${g.found} of ${g.possible}</td></tr>`)
         .join("");
+    const statusSummary = ctx.showStatus ? statusSummaryHtml(stats) : "";
     return `<section class="gr-summary" id="gr-summary"><h2>Summary Findings</h2>
 <p>${stats.uniqueAncestors} ancestors are on the family tree across ${model.generations} generations.</p>
 <table class="gr-table"><thead><tr><th>Generation</th><th>Ancestors found</th></tr></thead><tbody>${rows}</tbody></table>
-${years}${countries}</section>`;
+${years}${countries}${statusSummary}</section>`;
 }
 
 function missingHtml(model) {
@@ -278,6 +364,8 @@ export function renderReport(model, settings = {}) {
         showRelationship: Boolean(model.options.showRelationship),
         showPath: Boolean(model.options.showPath),
         rootWtId: root?.person?.wtId || "",
+        showStatus: model.options.showStatus !== false,
+        showConfident: model.options.showConfident !== false,
     };
     model.entries.forEach((e) => {
         e.showPortrait = showPortraits;
@@ -304,14 +392,15 @@ export function renderReport(model, settings = {}) {
     return `<article class="gr-report">
 <header class="gr-title">
 <h1>Ancestors of ${esc(rootName)}</h1>
-<p>${model.generations} generation${model.generations === 1 ? "" : "s"}${settings.generatedOn ? ` &middot; created ${esc(settings.generatedOn)}` : ""} &middot; compiled from <a href="${WIKITREE_URL}">WikiTree</a></p>
+<p>${model.generations} generation${model.generations === 1 ? "" : "s"}${settings.generatedOn ? ` &middot; created ${esc(settings.generatedOn)}` : ""} &middot; compiled from <a href="${WIKITREE_URL}">WikiTree</a> <small class="gr-version">&middot; report version ${esc(REPORT_VERSION)}</small></p>
 </header>
 ${contentsHtml(model)}
 <section class="gr-howto"><h2>How to read this report</h2>
 <p>Ancestors are numbered with the <em>Ahnentafel</em> system. The subject is #1, the father is #2 and the mother #3. A father's number is double his child's, and a mother's is double plus one. Each ancestor's <em>Family</em> block lists their parents, spouses, siblings and children (where a profile has both listed and biological parents, the Biological / Adoptive buttons under the heading choose which line the report follows); relatives the report cannot show (private profiles, or living people if hidden) are counted but not named.</p>
+${ctx.showStatus ? `<p>The badges show a profile's <em>Research Status</em> (set by WikiTree members; profiles with no status are not marked) and the <em>Relationship Status</em> of parent-child links and marriages. ${ctx.showConfident ? "A check mark means Confident, the normal case; the other statuses are named." : "A link is marked when it is Uncertain, Non-biological or Confirmed with DNA; an unmarked link is Confident."}</p>` : ""}
 ${missingHtml(model)}
 </section>
-${summaryHtml(model)}
+${summaryHtml(model, ctx)}
 ${body}
 ${appSections}
 ${indexesHtml(model, ctx)}

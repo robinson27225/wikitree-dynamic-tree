@@ -4,6 +4,10 @@
 
 import { DATE_FORMATS, DEFAULT_DATE_STYLE, STATUS_FORMATS } from "./report_dates.js";
 
+// Shown in the report so a reader (and anyone helping them) can tell which build is running: browsers keep old copies
+// of a view's files, and a half-updated page is easy to mistake for a bug.
+export const REPORT_VERSION = "2026.10.10-4";
+
 // Sent to the API as "TA-GenealogyReport" (WikiTreeAPI.postToAPI prepends "TA-").
 export const APP_ID = "GenealogyReport";
 
@@ -11,7 +15,7 @@ export const APP_ID = "GenealogyReport";
 // with a biography. Ten generations is what the Ahnentafel app's report also allows.
 export const MAX_GENERATIONS = 10;
 export const MIN_GENERATIONS = 1;
-export const DEFAULT_GENERATIONS = 3;
+export const DEFAULT_GENERATIONS = 4;
 
 // getPeople "nuclear" and "ancestors" accept at most 100 keys per call, and return at most this many related
 // profiles per page.
@@ -23,21 +27,24 @@ export const DEFAULT_OPTIONS = Object.freeze({
     includeFamily: true,
     includeBio: true,
     includeSources: true,
-    includeBioImages: false,
+    includeBioImages: true,
     includePortraits: true,
     hideStickers: true,
-    maskLiving: false,
+    maskLiving: true,
     showWtIds: true,
     showRelationship: true,
-    showPath: false,
+    showPath: true,
     dateFormat: DEFAULT_DATE_STYLE.dateFormat,
     dateStatusFormat: DEFAULT_DATE_STYLE.statusFormat,
     parentMode: "main",
-    sectionStats: false,
-    sectionFan: false,
-    sectionCalendar: false,
-    sectionSurnames: false,
+    sectionStats: true,
+    sectionFan: true,
+    sectionCalendar: true,
+    sectionSurnames: true,
     fanAngle: 180,
+    aiOverview: false,
+    showStatus: true,
+    showConfident: true,
 });
 
 function toBoolean(value, fallback) {

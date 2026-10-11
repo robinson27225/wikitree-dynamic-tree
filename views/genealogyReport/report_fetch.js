@@ -41,12 +41,14 @@ const PERSON_FIELDS = [
     "BioMother",
     "Privacy",
     "IsLiving",
+    "ResearchStatus",
     "Spouses",
     "Photo",
     "PhotoData",
 ];
 
 const MAX_PAGES = 20;
+const LOOKUP_KEYS_PER_CALL = 500; // a plain lookup takes up to 1000 keys; this keeps each request modest
 const RETRIES = 3;
 
 export class ReportFetchError extends Error {
@@ -200,7 +202,53 @@ export async function completeReportData({
         if (result.cancelled) return { ...state, cancelled: true };
         batch.forEach((id) => state.relativesLoaded.add(id));
     }
+
+    // The relatives request does not always return everyone it should (a first wife who died before her husband's
+    // second marriage was left out of one real family, though she is open and her child came back). Without this, a
+    // person who simply was not returned would be reported as private. Ask for each spouse and co-parent that a
+    // Family block will name but that is missing, directly and once.
+    const wanted = missingReferences(
+        people,
+        [...new Set(buildSlots(rootId, people, generations, chooseParents).values())],
+        state.attempted
+    );
+    for (const batch of chunk(wanted, LOOKUP_KEYS_PER_CALL)) {
+        batch.forEach((id) => state.attempted.add(id));
+        const result = await fetchPages({
+            api,
+            keys: batch,
+            fields: PERSON_FIELDS,
+            params: { resolveRedirect: 1 },
+            wait,
+            isCancelled,
+            onProgress,
+            describe: () => "Fetching spouses and other parents\u2026",
+        });
+        mergePeople(people, result.people);
+        if (result.cancelled) return { ...state, cancelled: true };
+    }
     return state;
+}
+
+/**
+ * Ids of the people a Family block will name (the spouses of the people on the line, and every parent of their
+ * children) that have not been fetched and have not been asked for.
+ */
+export function missingReferences(people, lineIds, attempted) {
+    const positive = (value) => {
+        const id = Number(value);
+        return Number.isFinite(id) && id > 0 ? String(id) : "";
+    };
+    const line = new Set(lineIds);
+    const wanted = new Set();
+    for (const id of line) {
+        for (const spouse of Object.values(people[id]?.Spouses || {})) wanted.add(positive(spouse?.Id));
+    }
+    for (const person of Object.values(people)) {
+        const parents = [person.Father, person.Mother, person.BioFather, person.BioMother].map(positive);
+        if (parents.some((id) => id && line.has(id))) parents.forEach((id) => wanted.add(id));
+    }
+    return [...wanted].filter((id) => id && !people[id] && !attempted.has(id));
 }
 
 /**

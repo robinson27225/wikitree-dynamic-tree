@@ -9,6 +9,7 @@
  */
 
 import { countryOf, dateSortKey, yearOf } from "./report_dates.js";
+import { isMarked, marriageStatusOf, parentLinkStatus } from "./report_status.js";
 
 const MAX_EXACT_GENERATIONS = 50;
 
@@ -150,6 +151,7 @@ function spousesOf(person) {
             marriageDate: spouse?.MarriageDate || "",
             marriageLocation: spouse?.MarriageLocation || "",
             marriageStatus: spouse?.DataStatus?.MarriageDate || "",
+            relationship: marriageStatusOf(spouse),
         }))
         .filter((spouse) => spouse.id);
 }
@@ -162,6 +164,8 @@ export function normalizePerson(person) {
     return {
         id: positiveId(person.Id),
         wtId: person.Name || "",
+        isLiving: isLivingFlag(person.IsLiving),
+        researchStatus: Number(person.ResearchStatus) || 0,
         name: displayName(person),
         given: uniqueTokens(person.FirstName || person.RealName, person.MiddleName).join(" "),
         lastNameAtBirth: person.LastNameAtBirth || "",
@@ -243,7 +247,8 @@ function byBirth(a, b) {
 function relativeRef(id, people, firstSlotOf, privacy) {
     const person = people[id];
     const slot = firstSlotOf.get(id) || 0;
-    if (isHiddenPerson(person, privacy)) return { id, hidden: true, slot };
+    // "missing": no record came back at all (not the same as private). "private": a record with no name, or living and masked.
+    if (isHiddenPerson(person, privacy)) return { id, hidden: true, slot, reason: person ? "private" : "missing" };
     return { ...normalizePerson(person), hidden: false, slot };
 }
 
@@ -296,6 +301,8 @@ export function buildFamily(personId, number, context) {
     const parents = [chosen.fatherId, chosen.motherId].filter(Boolean).map((id) => ({
         ...relativeRef(id, people, firstSlotOf, privacy),
         role: id === chosen.fatherId ? "father" : "mother",
+        // how sure this person's link to that parent is (it is kept on the child, which is this person)
+        linkStatus: parentLinkStatus(people[personId], id),
     }));
 
     const siblingIds = new Set([...childrenOf(chosen.fatherId), ...childrenOf(chosen.motherId)]);
@@ -309,6 +316,7 @@ export function buildFamily(personId, number, context) {
     const children = childIds.map((id) => ({
         ...relativeRef(id, people, firstSlotOf, privacy),
         link: childLinkKind(personId, people[id]),
+        linkStatus: parentLinkStatus(people[id], personId),
     }));
 
     // Partners: recorded spouses, plus the other parent of any child. The direct-line spouse is cross-referenced
@@ -316,8 +324,13 @@ export function buildFamily(personId, number, context) {
     const marriages = new Map(self.spouses.map((s) => [s.id, s]));
     const partnerIds = new Set(marriages.keys());
     for (const childId of childIds) {
-        const { fathers, mothers } = parentSets(people[childId]);
-        for (const other of [...fathers, ...mothers]) partnerIds.add(other);
+        // The other parent in the same pair: the listed parents are a couple, and so are the biological parents.
+        // A child's listed father and biological father are not partners of each other.
+        const { main, bio } = parentOptions(people[childId]);
+        for (const pair of [main, bio]) {
+            if (pair.fatherId === personId && pair.motherId) partnerIds.add(pair.motherId);
+            else if (pair.motherId === personId && pair.fatherId) partnerIds.add(pair.fatherId);
+        }
     }
     partnerIds.delete(personId);
     partnerIds.delete(directSpouseId);
@@ -326,6 +339,7 @@ export function buildFamily(personId, number, context) {
         marriageDate: marriages.get(id)?.marriageDate || "",
         marriageLocation: marriages.get(id)?.marriageLocation || "",
         marriageStatus: marriages.get(id)?.marriageStatus || "",
+        relationship: marriages.get(id)?.relationship || null,
     }));
 
     const marriageToDirectSpouse = directSpouseId ? marriages.get(directSpouseId) : null;
@@ -335,6 +349,7 @@ export function buildFamily(personId, number, context) {
               marriageDate: marriageToDirectSpouse?.marriageDate || "",
               marriageLocation: marriageToDirectSpouse?.marriageLocation || "",
               marriageStatus: marriageToDirectSpouse?.marriageStatus || "",
+              relationship: marriageToDirectSpouse?.relationship || null,
           }
         : null;
 
@@ -362,8 +377,25 @@ function buildStats(entries, generations) {
         const country = countryOf(e.person.birthLocation);
         if (country) countries.set(country, (countries.get(country) || 0) + 1);
     }
+    // Research status of each ancestor (0 = none set), and the status of each link on the direct line.
+    const researchCounts = {};
+    for (const e of people)
+        researchCounts[e.person.researchStatus] = (researchCounts[e.person.researchStatus] || 0) + 1;
+    const linkCounts = {};
+    const uncertainLinks = []; // Uncertain or Non-biological: worth checking
+    const dnaLinks = []; // Confirmed with DNA
+    for (const e of entries) {
+        if (e.n < 2 || !e.linkStatus || e.kind === "hidden") continue;
+        linkCounts[e.linkStatus.code] = (linkCounts[e.linkStatus.code] || 0) + 1;
+        if (e.linkStatus.code === 30) dnaLinks.push(e.n);
+        else if (isMarked(e.linkStatus.code)) uncertainLinks.push(e.n);
+    }
     return {
         byGeneration,
+        researchCounts,
+        linkCounts,
+        uncertainLinks,
+        dnaLinks,
         uniqueAncestors: new Set(entries.filter((e) => e.kind !== "unavailable").map((e) => e.id)).size,
         earliestBirthYear: years.length ? Math.min(...years) : null,
         latestBirthYear: years.length ? Math.max(...years) : null,
@@ -424,8 +456,10 @@ export function buildReportModel({ rootId, people, options, parentModes }) {
         const base = { n, gen: generationOf(n), id };
         const raw = people[id];
         if (!raw) return { ...base, kind: "unavailable" };
+        // How sure the link is between this ancestor and the person below them on the line (kept on that person).
+        base.linkStatus = n >= 2 ? parentLinkStatus(people[slots.get(Math.floor(n / 2))], id) : null;
         if (firstSlotOf.get(id) !== n) return { ...base, kind: "duplicate", firstSlot: firstSlotOf.get(id) };
-        if (isHiddenPerson(raw, context.privacy)) return { ...base, kind: "hidden" };
+        if (isHiddenPerson(raw, context.privacy)) return { ...base, kind: "hidden", linkStatus: null };
         const chosen = parentsFor(raw, chooseParents(id));
         const listed = parentOptions(raw);
         const alternateIds = chosen.hasAlternate

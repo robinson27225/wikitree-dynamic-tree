@@ -15,31 +15,58 @@ Privacy follows the API: you see what the WikiTree account you are logged in wit
 
 ## Options
 
-| Option                | Default | Notes                                                                                                                     |
-| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Generations           | 3       | 1 to 10                                                                                                                   |
-| Family block          | on      | Needs extra API requests, in batches of 100 ancestors                                                                     |
-| Biographies           | on      |                                                                                                                           |
-| Sources (footnotes)   | on      | `[n]` markers and the endnotes under each biography                                                                       |
-| Profile portraits     | on      |                                                                                                                           |
-| Biography images      | off     | Images inside biographies                                                                                                 |
-| Hide stickers         | on      | Removes the badge / name-study boxes at the top of biographies                                                            |
-| Parents followed      | listed  | Which parents the report follows to start with: the ones listed on each profile, or the biological ones where they differ |
-| Statistics            | off     | Section: generation-by-generation statistics (see below)                                                                  |
-| Fan chart             | off     | Section: SVG fan chart; **Fan shape** is 180°, 240° or 360°                                                               |
-| Family calendar       | off     | Section: birth, death and marriage anniversaries by month                                                                 |
-| Surnames list         | off     | Section: surnames per generation, father's side and mother's side                                                         |
-| Hide living people    | off     | Hides anyone flagged living, even if the API returned them                                                                |
-| Date format           | shared  | Same choice as the other Tree Apps (`DateFormatOptions`), remembered there                                                |
-| Date status           | shared  | bef., aft., abt. / before, after, about / <, >, ~                                                                         |
-| WikiTree IDs          | on      | In headings and the name index                                                                                            |
-| Relationship          | on      | "grandfather", "2nd great-grandmother", worked out from the Ahnentafel number                                             |
-| Path from the subject | off     | "Subject → parent → grandparent" under each heading                                                                       |
+| Option                                      | Default | Notes                                                                                                                                           |
+| ------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Generations                                 | 4       | 1 to 10                                                                                                                                         |
+| Family block                                | on      | Needs extra API requests, in batches of 100 ancestors                                                                                           |
+| Biographies                                 | on      |                                                                                                                                                 |
+| Sources (footnotes)                         | on      | `[n]` markers and the endnotes under each biography                                                                                             |
+| Profile portraits                           | on      |                                                                                                                                                 |
+| Biography images                            | on      | Images inside biographies                                                                                                                       |
+| Hide stickers                               | on      | Removes the badge / name-study boxes at the top of biographies                                                                                  |
+| Parents followed                            | listed  | Which parents the report follows to start with: the ones listed on each profile, or the biological ones where they differ                       |
+| Statistics                                  | on      | Section: generation-by-generation statistics (see below)                                                                                        |
+| Fan chart                                   | on      | Section: SVG fan chart; **Fan shape** is 180°, 240° or 360°                                                                                     |
+| Family calendar                             | on      | Section: birth, death and marriage anniversaries by month                                                                                       |
+| Surnames list                               | on      | Section: surnames per generation, father's side and mother's side                                                                               |
+| AI overview                                 | off     | A separate panel with an AI-written overview (see below)                                                                                        |
+| Hide living people                          | on      | Hides anyone flagged living, even if the API returned them. On by default, so a copy is safe to share; untick it to see your own living profile |
+| Date format                                 | shared  | Same choice as the other Tree Apps (`DateFormatOptions`), remembered there                                                                      |
+| Date status                                 | shared  | bef., aft., abt. / before, after, about / <, >, ~                                                                                               |
+| WikiTree IDs                                | on      | In headings and the name index                                                                                                                  |
+| Relationship                                | on      | "grandfather", "2nd great-grandmother", worked out from the Ahnentafel number                                                                   |
+| Research status and relationship confidence | on      | Badges for WikiTree's Research Status and Relationship Status (see below)                                                                       |
+| Mark Confident relationships (✓)            | on      | Marks Confident parent-child links and marriages with a check, as WikiTree's own tree views do. Off leaves them unmarked                        |
+| Path from the subject                       | on      | "Subject → parent → grandparent" under each heading                                                                                             |
+
+Everything is on by default except the AI overview, which sends data to a third party and so is always opt-in.
 
 They can also be set in the URL, e.g. `#name=Windsor-1&view=genealogyReport&generations=4&includeBio=0&dateFormat=iso`.
 The option names are the field names in the form (`includeFamily`, `includeBio`, `includeSources`, `includePortraits`,
-`includeBioImages`, `hideStickers`, `maskLiving`, `showWtIds`, `showRelationship`, `showPath`, `dateFormat`,
-`dateStatusFormat`, `parentMode` = `main` or `bio`, `sectionStats`, `sectionFan`, `sectionCalendar`, `sectionSurnames`, `fanAngle` = `180`, `240` or `360`). The page rewrites the hash when it starts a view, so these are read once, when the page loads.
+`includeBioImages`, `hideStickers`, `maskLiving`, `showWtIds`, `showRelationship`, `showPath`, `showStatus`, `showConfident`, `dateFormat`,
+`dateStatusFormat`, `parentMode` = `main` or `bio`, `sectionStats`, `sectionFan`, `sectionCalendar`, `sectionSurnames`, `fanAngle` = `180`, `240` or `360`, `aiOverview`). The page rewrites the hash when it starts a view, so these are read once, when the page loads.
+
+## Research status and relationship confidence
+
+The report shows WikiTree's own indicators, in WikiTree's own words:
+
+- **Research Status** ([Help:Research_Status](https://www.wikitree.com/wiki/Help:Research_Status)): a badge under each
+  ancestor's heading for Unfinished, Help Requested, Sources to Review, Silver Standard, Gold Standard Candidate or Gold
+  Standard. A profile with no status gets no badge, as on WikiTree.
+- **Relationship Status** ([Help:Relationship_Status](https://www.wikitree.com/wiki/Help:Relationship_Status)): how sure
+  a parent-child link is (Non-biological, Uncertain, Confident, Confirmed with DNA) and whether a marriage is
+  Confident or Uncertain. The statuses are shown on each
+  direct-line ancestor ("Uncertain relationship to #1"), beside parents and children in the Family block, and beside a
+  marriage ("Marriage uncertain"). Confident links and marriages carry a check mark ("✓ Confident", "✓ Marriage
+  confident"), as on WikiTree's own tree views, unless **Mark Confident relationships** is turned off.
+
+The badges say what they mean in words, so they still read on a black and white printout. The summary counts both, lists
+the links to check (Uncertain or Non-biological) and the links confirmed with DNA. The AI overview prompt includes the
+same facts. In biological mode a link's status is the biological link's own.
+
+The research status comes from the `ResearchStatus` field, and relationship statuses from `DataStatus` (`Father`,
+`Mother`, `BioFather`, `BioMother`) and from the marriage's `data_status.certainty`. Values WikiTree does not define are
+ignored rather than shown.
 
 ## Biological and adoptive parents
 
@@ -67,6 +94,47 @@ each download the same ancestors again. Each section links to the real app for t
 | Family calendar | Birth and death anniversaries of the ancestors and their siblings, and the marriages of the ancestors, by month. Only dates with a month and a day are included                                                                                                                   |
 | Surnames list   | Last names at birth for each generation, father's side and mother's side, with each surname highlighted where it first appears, and a list of every distinct surname. Unknown, private and blank names are left out                                                               |
 
+## AI overview
+
+Tick **AI overview** and, when the report has finished loading, a panel appears beside it with an overview of the
+ancestors written by an AI. The panel is not part of the report and is never printed, and the overview is labelled
+as AI-written because it can make mistakes.
+
+- **Copy prompt** needs no key and sends nothing anywhere: it copies a ready-made prompt (the rules, the report's facts
+  and the ancestors) to paste into any AI chat.
+- **Generate overview** sends the same prompt to Anthropic Claude, OpenAI or Google Gemini from your browser, with
+  your own API key. Model names are editable, because they change faster than this code. Tick _Write the overview
+  automatically_ to have it written whenever a report finishes (a key must be held).
+- **Send** chooses facts only (names, dates, places, relationships, statistics) or facts plus a short excerpt of each
+  ancestor's biography. Excerpts need Biographies to be on in the report.
+
+Privacy:
+
+- **Living people are never sent**, whatever the other options say: anyone flagged living, and anyone with no death
+  date who was born in the last 100 years. If the starting profile is one of them, it is left out, and the prompt says
+  so. The panel shows how many people will be sent and how many are left out before you press anything.
+- **The API key is kept in memory only.** It is never saved in the browser, in the address or in the report, and it is
+  forgotten when you leave the view or press _Forget key_. (Tree Apps from every WikiTree member share one origin, so
+  anything saved in the browser there could be read by another member's app.) Only choices such as the provider and the
+  model names are remembered.
+- The key is sent only in the request header to the provider you chose. Error messages are written from the HTTP
+  status, never from the provider's reply, which can echo part of a key.
+- The overview is shown as plain text; nothing the AI writes can add links or markup to the page.
+
+A report changed after an overview was written (for example by choosing other parents) hides that overview and asks
+you to generate it again.
+
+## "Not retrieved" and "private"
+
+A relative the report cannot name is either **private** (WikiTree returned a record with no name, or they are living and
+hidden) or **not retrieved** (no record came back at all). They are different: the relatives request does not always
+return everyone (one real first wife, open and long dead, was left out), so after it the report asks directly for any
+spouse or co-parent a Family block will name but that is missing, once. Only people WikiTree really does not return
+remain "not retrieved".
+
+The title block ends with the report version, so a reader (and anyone helping them) can tell which build is running:
+browsers keep old copies of a page's files, and a half-updated page is easy to mistake for a bug.
+
 ## Files
 
 | File                 | Purpose                                                           |
@@ -81,6 +149,8 @@ each download the same ancestors again. Each section links to the real app for t
 | `report_sections.js` | Statistics, Family Calendar and Surnames List sections            |
 | `report_fan.js`      | Fan chart section (SVG)                                           |
 | `report_html.js`     | Escaping and link helpers shared by the renderers                 |
+| `report_ai.js`       | AI prompt (living people excluded), providers, error messages     |
+| `report_ai_panel.js` | The AI overview panel (key held in memory only)                   |
 
 `report_model.js`, `report_dates.js`, `report_options.js`, `report_fetch.js` and `report_render.js` have no DOM or network dependencies of their own, so they run under Node. `report_bio.js` needs a DOM.
 

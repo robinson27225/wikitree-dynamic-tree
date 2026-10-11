@@ -377,7 +377,123 @@
   page: wide;
 }
 
+/* Research status and relationship confidence badges. They carry their meaning in words, so they still read in black and white. */
+.genealogyReportView .gr-badges {
+  margin: 0.2rem 0 0.3rem;
+}
+.genealogyReportView .gr-badge {
+  display: inline-block;
+  padding: 0 0.45rem;
+  margin: 0 0.15rem 0 0;
+  border: 1px solid #888;
+  border-radius: 0.6rem;
+  font-size: 0.72rem;
+  font-weight: normal;
+  line-height: 1.5;
+  white-space: nowrap;
+  background: #fff;
+  color: #333;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+.genealogyReportView .gr-rs-10 {
+  border-color: #c58b2a;
+  background: #fbf0dc;
+}
+.genealogyReportView .gr-rs-20 {
+  border-color: #b3402e;
+  background: #fbe3df;
+}
+.genealogyReportView .gr-rs-30 {
+  border-color: #8a6bb0;
+  background: #efe8f7;
+}
+.genealogyReportView .gr-rs-40 {
+  border-color: #7d8691;
+  background: #e9ecf0;
+}
+.genealogyReportView .gr-rs-50,
+.genealogyReportView .gr-rs-60 {
+  border-color: #b8921f;
+  background: #f8edc4;
+}
+.genealogyReportView .gr-rs-60 {
+  font-weight: bold;
+}
+.genealogyReportView .gr-rel-5 {
+  border-color: #6b7f9a;
+  background: #e6edf6;
+}
+.genealogyReportView .gr-rel-10 {
+  border-color: #b3402e;
+  background: #fbe3df;
+}
+.genealogyReportView .gr-rel-20 {
+  border-color: #4a9b5f;
+  background: #e3f4e8;
+}
+.genealogyReportView .gr-version {
+  color: #777;
+}
+.genealogyReportView .gr-rel-30 {
+  border-color: #2f7d4f;
+  background: #def2e5;
+}
+.genealogyReportView .gr-family .gr-badge {
+  font-size: 0.68rem;
+}
+
+/* AI overview panel: beside the report, never part of it or of the printout */
+.genealogyReportView .gr-ai-panel {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border: 1px solid #b9c8bd;
+  border-left: 4px solid #1f3a2c;
+}
+.genealogyReportView .gr-ai-panel[hidden],
+.genealogyReportView .gr-ai-result[hidden],
+.genealogyReportView .gr-ai-prompt[hidden] {
+  display: none;
+}
+.genealogyReportView .gr-ai-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.2rem;
+}
+.genealogyReportView .gr-ai-note,
+.genealogyReportView .gr-ai-summary,
+.genealogyReportView .gr-ai-label {
+  color: #444;
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+.genealogyReportView .gr-ai-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  margin: 0.4rem 0;
+}
+.genealogyReportView .gr-ai-model {
+  width: 13rem;
+}
+.genealogyReportView .gr-ai-key {
+  width: 17rem;
+}
+.genealogyReportView .gr-ai-text {
+  margin: 0.4rem 0;
+  max-width: 44rem;
+  line-height: 1.55;
+}
+.genealogyReportView .gr-ai-prompt {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
 @media print {
+  .genealogyReportView .gr-ai-panel {
+    display: none !important;
+  }
   .genealogyReportView .gr-table-scroll {
     overflow: visible;
   }
