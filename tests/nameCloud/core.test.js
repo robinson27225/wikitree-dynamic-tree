@@ -52,7 +52,7 @@ import {
     scopeById,
     seededRandom,
     surnameOf,
-} from "../../views/surnameTree/surname_tree_core.js";
+} from "../../views/nameCloud/name_cloud_core.js";
 
 const measure = (text, size) => text.length * size * 0.5;
 

@@ -12,7 +12,7 @@ import {
     pdfText,
     sizeLabel,
     widthFor,
-} from "../../views/surnameTree/surname_tree_export.js";
+} from "../../views/nameCloud/name_cloud_export.js";
 
 describe("formats and sizes", () => {
     it("offers PNG, JPG and PDF, and only asks for a size for the pictures", () => {
@@ -44,9 +44,9 @@ describe("formats and sizes", () => {
     });
 
     it("names the file for the profile, with the width for pictures", () => {
-        expect(exportFileName("Robinson-27274", "png", 1600)).toBe("surname-tree-Robinson-27274-1600px.png");
-        expect(exportFileName("Robinson-27274", "jpg", 800)).toBe("surname-tree-Robinson-27274-800px.jpg");
-        expect(exportFileName("Robinson-27274", "pdf", 0)).toBe("surname-tree-Robinson-27274.pdf");
+        expect(exportFileName("Robinson-27274", "png", 1600)).toBe("name-cloud-Robinson-27274-1600px.png");
+        expect(exportFileName("Robinson-27274", "jpg", 800)).toBe("name-cloud-Robinson-27274-800px.jpg");
+        expect(exportFileName("Robinson-27274", "pdf", 0)).toBe("name-cloud-Robinson-27274.pdf");
     });
 });
 
@@ -66,7 +66,7 @@ describe("buildPdf", () => {
             jpeg,
             pixelWidth: 2400,
             pixelHeight: 2112,
-            title: "Surname Tree of A (B)",
+            title: "Name Cloud of A (B)",
             caption: "5 surnames.",
             ...extra,
         });
@@ -80,7 +80,7 @@ describe("buildPdf", () => {
         expect(t).toContain("/Count 1");
         expect(t).toContain("/Filter /DCTDecode");
         expect(t).toContain("/Width 2400 /Height 2112");
-        expect(t).toContain("(Surname Tree of A \\(B\\)) Tj");
+        expect(t).toContain("(Name Cloud of A \\(B\\)) Tj");
         expect(t).toContain("(5 surnames.) Tj");
         expect(Buffer.from(pdf).includes(Buffer.from(jpeg))).toBe(true);
     });
@@ -111,6 +111,6 @@ describe("buildPdf", () => {
     it("shrinks a very long title to fit the page", () => {
         const size = (t) => parseFloat(t.match(/\/F1 ([\d.]+) Tf/)[1]);
         expect(size(text(make()))).toBe(20);
-        expect(size(text(make({ title: "Surname Tree of " + "Longname ".repeat(12) })))).toBeLessThan(10);
+        expect(size(text(make({ title: "Name Cloud of " + "Longname ".repeat(12) })))).toBeLessThan(10);
     });
 });

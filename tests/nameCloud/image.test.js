@@ -1,12 +1,5 @@
 /** @jest-environment node */
-import {
-    CELL,
-    HEIGHT,
-    WIDTH,
-    layoutWords,
-    seededRandom,
-    wordCells,
-} from "../../views/surnameTree/surname_tree_core.js";
+import { CELL, HEIGHT, WIDTH, layoutWords, seededRandom, wordCells } from "../../views/nameCloud/name_cloud_core.js";
 import {
     DEFAULT_SENSITIVITY,
     MARGIN,
@@ -21,7 +14,7 @@ import {
     placeInFrame,
     shapeFromPixels,
     wordColour,
-} from "../../views/surnameTree/surname_tree_image.js";
+} from "../../views/nameCloud/name_cloud_image.js";
 
 /** A WIDTH x HEIGHT picture in RGBA, filled with `background` (transparent if null), then painted with draw(set, x, y). */
 function picture(background, paint) {

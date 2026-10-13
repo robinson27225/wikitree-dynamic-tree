@@ -1,5 +1,5 @@
-import { CELL } from "../../views/surnameTree/surname_tree_core.js";
-import { inkOffsets } from "../../views/surnameTree/surname_tree_draw.js";
+import { CELL } from "../../views/nameCloud/name_cloud_core.js";
+import { inkOffsets } from "../../views/nameCloud/name_cloud_draw.js";
 
 /** A stand-in for the page's canvas: the letters are a hollow ring, as an O is, and the middle is empty. */
 function ringCanvas() {
@@ -50,7 +50,7 @@ describe("inkOffsets: the cells a name's letters cover", () => {
 
     it("gives null where the page cannot draw text, so the layout uses the box", () => {
         jest.isolateModules(() => {
-            const fresh = require("../../views/surnameTree/surname_tree_draw.js");
+            const fresh = require("../../views/nameCloud/name_cloud_draw.js");
             jest.spyOn(document, "createElement").mockImplementation(() => ({ getContext: () => null }));
             expect(fresh.inkOffsets("O", 40, 0, 0)).toBeNull();
         });

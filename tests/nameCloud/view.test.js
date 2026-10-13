@@ -9,8 +9,8 @@ import {
     viewScale,
     wheelFactor,
     zoomAbout,
-} from "../../views/surnameTree/surname_tree_zoom.js";
-import { attachZoom, renderTreeSvg } from "../../views/surnameTree/surname_tree_svg.js";
+} from "../../views/nameCloud/name_cloud_zoom.js";
+import { attachZoom, renderTreeSvg } from "../../views/nameCloud/name_cloud_svg.js";
 import {
     PAGE_SIZE,
     cardHtml,
@@ -19,7 +19,7 @@ import {
     listHtml,
     profileHref,
     sortedEntries,
-} from "../../views/surnameTree/surname_tree_list.js";
+} from "../../views/nameCloud/name_cloud_list.js";
 
 describe("zoom", () => {
     it("keeps the point under the pointer still when zooming", () => {
@@ -69,18 +69,18 @@ describe("renderTreeSvg", () => {
     it("draws the trunk, the clumps of leaves and a group for each word", () => {
         const { svg } = draw();
         expect(svg.getAttribute("viewBox")).toBe("0 0 1000 880");
-        expect(svg.querySelector(".sutree-trunk")).not.toBeNull();
-        expect(svg.querySelectorAll(".sutree-crown").length).toBeGreaterThan(8);
-        expect(svg.querySelectorAll(".sutree-word")).toHaveLength(3);
-        expect(svg.querySelector(".sutree-word text").textContent).toBe("SMITH");
+        expect(svg.querySelector(".ncloud-trunk")).not.toBeNull();
+        expect(svg.querySelectorAll(".ncloud-crown").length).toBeGreaterThan(8);
+        expect(svg.querySelectorAll(".ncloud-word")).toHaveLength(3);
+        expect(svg.querySelector(".ncloud-word text").textContent).toBe("SMITH");
     });
 
     it("shades the trunk across, and each clump of leaves from the light side to the shadow side", () => {
         const { svg } = draw();
-        const bark = svg.querySelector("#suTreeBark");
+        const bark = svg.querySelector("#ncloudBark");
         expect(bark.tagName).toBe("linearGradient");
-        expect(svg.querySelector(".sutree-trunk").getAttribute("fill")).toBe("url(#suTreeBark)");
-        const first = svg.querySelector(".sutree-crown");
+        expect(svg.querySelector(".ncloud-trunk").getAttribute("fill")).toBe("url(#ncloudBark)");
+        const first = svg.querySelector(".ncloud-crown");
         const id = first.getAttribute("fill").match(/#([^)]+)/)[1];
         const gradient = svg.querySelector(`#${id}`);
         expect(gradient.tagName).toBe("radialGradient");
@@ -93,9 +93,9 @@ describe("renderTreeSvg", () => {
 
     it("clips everything to the drawing's frame, so the foot of the trunk does not show below the ground", () => {
         const { svg } = draw();
-        const viewport = svg.querySelector(".sutree-viewport");
-        expect(viewport.getAttribute("clip-path")).toBe("url(#suTreeFrame)");
-        const rect = svg.querySelector("#suTreeFrame rect");
+        const viewport = svg.querySelector(".ncloud-viewport");
+        expect(viewport.getAttribute("clip-path")).toBe("url(#ncloudFrame)");
+        const rect = svg.querySelector("#ncloudFrame rect");
         expect(["x", "y", "width", "height"].map((a) => rect.getAttribute(a))).toEqual(["0", "0", "1000", "880"]);
         // the clip is on the group that zoom moves, so it moves with the picture
         expect(viewport.parentNode).toBe(svg);
@@ -103,28 +103,28 @@ describe("renderTreeSvg", () => {
 
     it("draws the ground, ridges of bark kept inside the trunk, and the shadow under the leaves", () => {
         const { svg } = draw();
-        const ground = svg.querySelector(".sutree-ground");
+        const ground = svg.querySelector(".ncloud-ground");
         expect(ground.tagName).toBe("ellipse");
         expect(Number(ground.getAttribute("cy"))).toBeGreaterThan(850);
-        const bark = svg.querySelector(".sutree-bark");
+        const bark = svg.querySelector(".ncloud-bark");
         expect(bark.getAttribute("d").match(/M/g).length).toBeGreaterThanOrEqual(10);
-        expect(bark.getAttribute("clip-path")).toBe("url(#suTreeTrunkClip)");
-        expect(svg.querySelector("#suTreeTrunkClip path")).not.toBeNull();
-        const shadow = svg.querySelector(".sutree-shadow");
+        expect(bark.getAttribute("clip-path")).toBe("url(#ncloudTrunkClip)");
+        expect(svg.querySelector("#ncloudTrunkClip path")).not.toBeNull();
+        const shadow = svg.querySelector(".ncloud-shadow");
         expect(shadow.getAttribute("transform")).toMatch(/^translate\(\d+ \d+\)$/);
         // the decoration never gets in the way of hovering or clicking the words
         [ground, bark, shadow].forEach((el) => expect(el.getAttribute("pointer-events")).toBe("none"));
         // and it is drawn before the words, behind them
-        const order = [...svg.querySelector(".sutree-viewport").children];
-        expect(order.indexOf(shadow)).toBeLessThan(order.indexOf(svg.querySelector(".sutree-word")));
-        expect(order.indexOf(svg.querySelector(".sutree-trunk"))).toBeLessThan(
-            order.indexOf(svg.querySelector(".sutree-crown"))
+        const order = [...svg.querySelector(".ncloud-viewport").children];
+        expect(order.indexOf(shadow)).toBeLessThan(order.indexOf(svg.querySelector(".ncloud-word")));
+        expect(order.indexOf(svg.querySelector(".ncloud-trunk"))).toBeLessThan(
+            order.indexOf(svg.querySelector(".ncloud-crown"))
         );
     });
 
     it("turns each word to its own angle, with an invisible box to hit that turns with it", () => {
         const { svg } = draw();
-        const groups = svg.querySelectorAll(".sutree-word");
+        const groups = svg.querySelectorAll(".ncloud-word");
         expect(groups[0].getAttribute("transform")).toBe("translate(500 300) rotate(0)");
         expect(groups[1].getAttribute("transform")).toBe("translate(300 200) rotate(-90)");
         expect(groups[2].getAttribute("transform")).toBe("translate(500 700) rotate(33.5)");
@@ -142,14 +142,14 @@ describe("renderTreeSvg", () => {
         const { svg, words } = draw();
         expect(words.get("SMITH")).toHaveLength(2);
         expect(words.get("BAKER")).toHaveLength(1);
-        expect(svg.querySelectorAll('.sutree-word[tabindex="0"]')).toHaveLength(2);
+        expect(svg.querySelectorAll('.ncloud-word[tabindex="0"]')).toHaveLength(2);
         expect(svg.querySelector('[data-surname="BAKER"]').getAttribute("aria-label")).toBe("BAKER, 2 profiles");
     });
 
     it("replaces what was drawn before", () => {
         const { svg } = draw();
         renderTreeSvg(svg, items.slice(0, 1));
-        expect(svg.querySelectorAll(".sutree-word")).toHaveLength(1);
+        expect(svg.querySelectorAll(".ncloud-word")).toHaveLength(1);
     });
 });
 
@@ -161,7 +161,7 @@ describe("attachZoom", () => {
         renderTreeSvg(svg, items);
         return { svg, zoom: attachZoom(svg) };
     };
-    const transformOf = (svg) => svg.querySelector(".sutree-viewport").getAttribute("transform");
+    const transformOf = (svg) => svg.querySelector(".ncloud-viewport").getAttribute("transform");
 
     it("zooms with the buttons, and resets", () => {
         const { svg, zoom } = setup();
@@ -280,17 +280,17 @@ describe("list and card", () => {
                 ),
             ],
         });
-        expect(html).toContain('Born: <span class="sutree-unknown">not recorded</span>');
-        expect(html).toContain('<span class="sutree-tag">adoptive</span>');
+        expect(html).toContain('Born: <span class="ncloud-unknown">not recorded</span>');
+        expect(html).toContain('<span class="ncloud-tag">adoptive</span>');
     });
 
     it("shows a page at a time, with a button for more", () => {
         const entries = Array.from({ length: PAGE_SIZE + 5 }, (_, i) => entry(i + 1));
         const first = listHtml({ text: "SMITH", count: entries.length, entries });
-        expect(first.html.match(/sutree-person/g)).toHaveLength(PAGE_SIZE);
+        expect(first.html.match(/ncloud-person/g)).toHaveLength(PAGE_SIZE);
         expect(first.html).toContain("5 not shown");
         const all = listHtml({ text: "SMITH", count: entries.length, entries }, PAGE_SIZE + 5);
-        expect(all.html).not.toContain("sutree-more");
+        expect(all.html).not.toContain("ncloud-more");
     });
 
     it("makes a card with the name, ID, life events and a link that opens the profile in a new tab", () => {
@@ -303,15 +303,15 @@ describe("list and card", () => {
         expect(open.getAttribute("href")).toBe("https://www.wikitree.com/wiki/Smith-1");
         expect(open.getAttribute("target")).toBe("_blank");
         expect(open.getAttribute("rel")).toContain("noopener");
-        expect(holder.querySelector(".sutree-card-rel")).toBeNull();
+        expect(holder.querySelector(".ncloud-card-rel")).toBeNull();
     });
 
     it("says on the card how someone is family when adoption is involved", () => {
         const adopted = document.createElement("div");
         adopted.innerHTML = cardHtml(entry(1, {}, { bio: false, adopt: true }));
-        expect(adopted.querySelector(".sutree-card-rel").textContent).toBe("Family by adoption");
+        expect(adopted.querySelector(".ncloud-card-rel").textContent).toBe("Family by adoption");
         const both = document.createElement("div");
         both.innerHTML = cardHtml(entry(1, {}, { bio: true, adopt: true }));
-        expect(both.querySelector(".sutree-card-rel").textContent).toBe("Family by birth and by adoption");
+        expect(both.querySelector(".ncloud-card-rel").textContent).toBe("Family by birth and by adoption");
     });
 });

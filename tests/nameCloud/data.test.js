@@ -10,7 +10,7 @@ const {
     fetchGroup,
     fetchNearby,
     fetchScope,
-} = require("../../views/surnameTree/surname_tree_data.js");
+} = require("../../views/nameCloud/name_cloud_data.js");
 
 const person = (Id, extra = {}) => ({ Id, Name: `X-${Id}`, LastNameAtBirth: `Name${Id}`, ...extra });
 
