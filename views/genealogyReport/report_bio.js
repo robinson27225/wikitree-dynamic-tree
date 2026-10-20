@@ -123,9 +123,11 @@ const HEADING = /^H[1-6]$/;
 
 /**
  * Resolve a link or image address against wikitree.com. Only https (or http on wikitree.com, upgraded to https)
- * survives; every other scheme, including javascript: and data:, is rejected with "".
+ * survives; every other scheme, including javascript: and data:, is rejected with "". Links may also be plain http
+ * (`allowHttp`): many sources, such as national library and newspaper archives, still use it, and following a link
+ * is the reader's choice. Images stay https-only because a browser blocks http images on an https page.
  */
-function absoluteUrl(value) {
+function absoluteUrl(value, { allowHttp = false } = {}) {
     const text = (value || "").trim();
     if (!text) return "";
     let url;
@@ -135,7 +137,7 @@ function absoluteUrl(value) {
         return "";
     }
     if (url.protocol === "http:" && /(^|\.)wikitree\.com$/i.test(url.hostname)) url.protocol = "https:";
-    return url.protocol === "https:" ? url.href : "";
+    return url.protocol === "https:" || (allowHttp && url.protocol === "http:") ? url.href : "";
 }
 
 // Lazy-loading pages keep the real address in a data attribute or srcset instead of src.
@@ -166,7 +168,7 @@ function copyAllowedAttributes(source, target, { includeImages }) {
         if (raw.startsWith("#")) {
             target.setAttribute("href", raw);
         } else {
-            const href = absoluteUrl(raw);
+            const href = absoluteUrl(raw, { allowHttp: true });
             if (href) {
                 target.setAttribute("href", href);
                 target.setAttribute("rel", "noopener noreferrer");
