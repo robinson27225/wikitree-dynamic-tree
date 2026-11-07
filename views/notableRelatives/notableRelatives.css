@@ -20,7 +20,24 @@
   margin: 0 0 4px;
 }
 .nr-view .nr-summary {
-  margin: 0;
+  margin: 6px 0 0;
+}
+.nr-view .nr-modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin: 6px 0;
+}
+.nr-view .nr-modes label {
+  cursor: pointer;
+}
+.nr-view .nr-modes select {
+  padding: 1px 4px;
+  font-size: 1em;
+}
+.nr-view .nr-stop.hidden {
+  display: none;
 }
 .nr-view .nr-progress {
   color: var(--nr-muted);
@@ -46,7 +63,7 @@
 .nr-view .nr-filters.hidden {
   display: none;
 }
-.nr-view .nr-degrees {
+.nr-view .nr-groups {
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
@@ -55,12 +72,12 @@
   margin: 0;
   padding: 0;
 }
-.nr-view .nr-degrees legend {
+.nr-view .nr-groups legend {
   font-weight: bold;
   margin-right: 8px;
   float: left;
 }
-.nr-view .nr-degrees label {
+.nr-view .nr-groups label {
   white-space: nowrap;
   cursor: pointer;
 }
@@ -104,13 +121,13 @@
   border: 1px dashed var(--nr-border);
   border-radius: 8px;
 }
-.nr-view .nr-degree {
+.nr-view .nr-group {
   margin-bottom: 14px;
   border: 1px solid var(--nr-border);
   border-radius: 8px;
   background: #fff;
 }
-.nr-view .nr-degree > summary {
+.nr-view .nr-group > summary {
   display: flex;
   gap: 10px;
   align-items: baseline;
@@ -119,10 +136,29 @@
   background: var(--nr-green-light);
   border-radius: 8px;
 }
-.nr-view .nr-degree[open] > summary {
+.nr-view .nr-group[open] > summary {
   border-radius: 8px 8px 0 0;
 }
-.nr-view .nr-degree-name {
+.nr-view .nr-group > summary {
+  flex-wrap: wrap;
+}
+.nr-view .nr-group-note {
+  color: var(--nr-muted);
+  font-style: italic;
+}
+.nr-view .nr-groups-hint {
+  color: var(--nr-muted);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.nr-view .nr-more-btn {
+  margin: 0 10px 10px;
+}
+.nr-view .nr-rel-link {
+  font-style: normal;
+  font-size: 0.9em;
+}
+.nr-view .nr-group-name {
   font-weight: bold;
   font-size: 1.1em;
   color: var(--nr-green);

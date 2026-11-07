@@ -1,12 +1,17 @@
 /*
  * Notable Relatives
  *
- * Lists the notable people (profiles with a notable template, found with WikiTree+) within 7 degrees of the
- * starting profile, grouped by degree, with filters for category, location, marker and name.
+ * Finds the notable people (profiles with a notable template, found with WikiTree+) related to the starting
+ * profile, in one of two ways:
+ *   - Shared ancestors (default): notable ancestors, notable descendants, and the notable descendants of each
+ *     generation of ancestors up to 15 generations back, grouped by the closest shared ancestors.
+ *   - Within 7 degrees: everyone in the CC7, in-laws included, grouped by degree.
+ * Filters for category, country, place, marker and name.
  *
  * Idea by Blake Ashton (Ashton-4458), in his answer of 7 November 2026 to the G2G question
  * "WikiTree Days Saturday Question: If you could invent one new WikiTree tool, what would it do?"
  * https://www.wikitree.com/g2g/2105562/wikitree-days-saturday-question-could-invent-wikitree-would?show=2105577#a2105577
+ * Inspired by Relative Finder, which finds famous relatives on FamilySearch.
  */
 
 import * as nr from "./notable_data.js";
@@ -15,7 +20,8 @@ const IDEA_URL =
     "https://www.wikitree.com/g2g/2105562/wikitree-days-saturday-question-could-invent-wikitree-would?show=2105577#a2105577";
 const IDEA_PROFILE = "https://www.wikitree.com/wiki/Ashton-4458";
 const WIKI = "https://www.wikitree.com/wiki/";
-const FILTER_PARAMS = ["degree", "cat", "loc", "place", "marker", "q"];
+const FILTER_PARAMS = ["mode", "gens", "group", "cat", "loc", "place", "marker", "q"];
+const PAGE_SIZE = 60; // cards shown per group before "Show more"
 
 const esc = (s) =>
     String(s ?? "").replace(
@@ -24,16 +30,21 @@ const esc = (s) =>
     );
 const fmt = (n) => Number(n).toLocaleString();
 const plural = (n, word, words = `${word}s`) => `${fmt(n)} ${n === 1 ? word : words}`;
+const relationshipUrl = (a, b) =>
+    "https://www.wikitree.com/index.php?title=Special:Relationship&action=calculate" +
+    `&person1Name=${encodeURIComponent(a)}&person2Name=${encodeURIComponent(b)}`;
 
 window.NotableRelativesView = class NotableRelativesView extends View {
-    static cache = new Map(); // starting profile Id -> { root, records, dataDate, isPartial, cc7Count }
+    // "<Id>|<mode>|<gens>" -> results of a finished search
+    static cache = new Map();
 
     meta() {
         return {
             title: "Notable Relatives",
             description:
-                "Notable people within 7 degrees (CC7) of this profile, grouped by degree, with category and " +
-                "location filters. Idea by Blake Ashton (Ashton-4458) on G2G.",
+                "Notable people related to this profile: notable ancestors, descendants and cousins through shared " +
+                "ancestors up to 15 generations back, or everyone within 7 degrees. Filter by category and " +
+                "location. Idea by Blake Ashton (Ashton-4458) on G2G.",
             docs: IDEA_URL,
             params: FILTER_PARAMS,
         };
@@ -42,15 +53,31 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     init(containerSelector, personId, params = {}) {
         this.container = document.querySelector(containerSelector);
         this.personId = Number(personId);
+        this.mode = params.mode === "cc7" ? "cc7" : "anc";
+        this.gens = this.clampGens(params.gens);
         this.filters = this.filtersFromParams(params);
-        this.controller?.abort();
-        this.controller = new AbortController();
+        this.shown = new Map();
 
         this.container.innerHTML = `
             <div class="nr-view">
                 <div class="nr-header">
                     <h2 class="nr-title">Notable Relatives</h2>
-                    <p class="nr-summary" aria-live="polite">Looking for notable relatives…</p>
+                    <div class="nr-modes" role="radiogroup" aria-label="Which relatives">
+                        <label><input type="radio" name="nr-mode" value="anc" ${this.mode === "anc" ? "checked" : ""} />
+                            Shared ancestors, up to
+                            <select class="nr-gens" aria-label="Generations back">
+                                ${Array.from({ length: nr.MAX_GENERATIONS - 2 }, (_, i) => i + 3)
+                                    .map(
+                                        (g) => `<option value="${g}" ${g === this.gens ? "selected" : ""}>${g}</option>`
+                                    )
+                                    .join("")}
+                            </select>
+                            generations back</label>
+                        <label><input type="radio" name="nr-mode" value="cc7" ${this.mode === "cc7" ? "checked" : ""} />
+                            Everyone within 7 degrees (includes in-laws)</label>
+                        <button type="button" class="small button nr-stop hidden">Stop</button>
+                    </div>
+                    <p class="nr-summary" aria-live="polite"></p>
                 </div>
                 <div class="nr-progress" aria-live="polite"></div>
                 <div class="nr-filters hidden"></div>
@@ -59,30 +86,20 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                     Notable profiles are those WikiTree+ lists with a notable template
                     (<a href="https://www.wikitree.com/wiki/Template:Notability" target="_blank">Notability</a>,
                     <a href="https://www.wikitree.com/wiki/Project:Notables" target="_blank">Notables Sticker</a>
-                    and others). Degrees count steps through parents, children, siblings and spouses. Use
-                    <em>Apps Login</em> to follow links through private profiles.<br />
+                    and others). <strong>Shared ancestors</strong> groups each notable by the nearest generation of
+                    ancestors they descend from; open <em>Relationship</em> on a card for the exact relationship.
+                    <strong>Within 7 degrees</strong> counts steps through parents, children, siblings and spouses.
+                    Use <em>Apps Login</em> to follow links through private profiles.<br />
                     Idea by <a href="${IDEA_PROFILE}" target="_blank">Blake Ashton (Ashton-4458)</a>
-                    on <a href="${IDEA_URL}" target="_blank">G2G</a>.
+                    on <a href="${IDEA_URL}" target="_blank">G2G</a>, inspired by Relative Finder.
                 </footer>
             </div>`;
 
-        const cached = NotableRelativesView.cache.get(this.personId);
-        if (cached) {
-            this.data = cached;
-            this.showResults();
-            const signal = this.controller.signal;
-            this.findMissingDegrees((data, sig) => WikiTreeAPI.postToAPI(data, sig), signal).catch((err) =>
-                console.warn("Notable Relatives:", err)
-            );
-            return;
-        }
-        this.load().catch((err) => {
-            if (err?.name === "AbortError") return;
-            console.error("Notable Relatives:", err);
-            this.setProgress("");
-            this.setSummary("");
-            wtViewRegistry.showError(err?.message || String(err));
-        });
+        const $c = $(this.container);
+        $c.find("input[name=nr-mode]").on("change", (e) => this.switchMode(e.target.value, this.gens));
+        $c.find(".nr-gens").on("change", (e) => this.switchMode("anc", this.clampGens(e.target.value)));
+        $c.find(".nr-stop").on("click", () => this.stop());
+        this.start();
     }
 
     close() {
@@ -90,11 +107,68 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         this.controller = null;
     }
 
-    async load() {
-        const signal = this.controller.signal;
-        const api = (data, sig) => WikiTreeAPI.postToAPI(data, sig);
+    clampGens(value) {
+        const n = Number(value);
+        return Number.isInteger(n) ? Math.max(3, Math.min(nr.MAX_GENERATIONS, n)) : nr.DEFAULT_GENERATIONS;
+    }
 
-        const rootResult = await api(
+    cacheKey() {
+        return `${this.personId}|${this.mode}|${this.mode === "anc" ? this.gens : ""}`;
+    }
+
+    switchMode(mode, gens) {
+        this.mode = mode === "cc7" ? "cc7" : "anc";
+        this.gens = gens;
+        this.container.querySelector(`input[name=nr-mode][value=${this.mode}]`).checked = true;
+        this.filters.groups = new Set(); // group keys differ between the two searches
+        this.writeParams();
+        this.start();
+    }
+
+    start() {
+        this.controller?.abort();
+        this.controller = new AbortController();
+        this.isStopping = false;
+        this.shown = new Map();
+        this.container.querySelector(".nr-results").innerHTML = "";
+        this.container.querySelector(".nr-filters").classList.add("hidden");
+        this.setProgress("");
+        wtViewRegistry.clearStatus();
+
+        const signal = this.controller.signal;
+        const cached = NotableRelativesView.cache.get(this.cacheKey());
+        if (cached) {
+            this.data = cached;
+            this.showStop(false);
+            this.showResults();
+            if (this.mode === "cc7") {
+                this.findMissingDegrees(this.api, signal).catch((err) => console.warn("Notable Relatives:", err));
+            }
+            return;
+        }
+        const load = this.mode === "cc7" ? this.loadCc7(signal) : this.loadAncestral(signal);
+        load.catch((err) => {
+            if (err?.name === "AbortError" || signal.aborted) return;
+            console.error("Notable Relatives:", err);
+            this.setProgress("");
+            this.setSummary("");
+            this.showStop(false);
+            wtViewRegistry.showError(err?.message || String(err));
+        });
+    }
+
+    stop() {
+        this.isStopping = true;
+        this.controller?.abort();
+    }
+
+    api(data, signal) {
+        return WikiTreeAPI.postToAPI(data, signal);
+    }
+
+    async loadRoot(signal) {
+        if (this.root?.id === this.personId) return this.root;
+        const result = await this.api(
             {
                 appId: nr.APP_ID,
                 action: "getPeople",
@@ -103,24 +177,107 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             },
             signal
         );
-        const root = Object.values(rootResult?.[0]?.people || {}).find((p) => Number(p.Id) === this.personId);
-        if (!root?.Name) throw new Error("WikiTree did not return the starting profile.");
-        const rootName = root?.Derived?.ShortName || [root.FirstName, root.LastNameAtBirth].join(" ") || root.Name;
-        this.setSummary(`Looking for notable relatives of ${esc(rootName)}…`);
+        const p = Object.values(result?.[0]?.people || {}).find((x) => Number(x.Id) === this.personId);
+        if (!p?.Name) throw new Error("WikiTree did not return the starting profile.");
+        const name = p?.Derived?.ShortName || [p.FirstName, p.LastNameAtBirth].filter(Boolean).join(" ") || p.Name;
+        this.root = { id: this.personId, wtId: p.Name, name };
+        return this.root;
+    }
+
+    // ---------- shared ancestors ----------
+
+    async loadAncestral(signal) {
+        const gens = this.gens;
+        const key = this.cacheKey();
+        this.setSummary("Looking for notable relatives…");
+        this.showStop(true);
+        const root = await this.loadRoot(signal);
+        this.setSummary(`Looking for notable relatives of ${esc(root.name)}…`);
+        const data = {
+            mode: "anc",
+            gens,
+            root,
+            records: [],
+            dataDate: "",
+            ancestorCount: 0,
+            searchedTo: 0,
+            isDone: false,
+        };
+        this.data = data;
+
+        const say = (status) => {
+            if (status.stage === "ancestors") {
+                data.ancestorCount = status.count;
+                this.setProgress(
+                    `Loading ancestors, generation ${status.generation} of ${gens}… ${fmt(status.count)} so far`
+                );
+            } else if (status.stage === "notable-ancestors") {
+                this.setProgress(`Found ${plural(data.ancestorCount, "ancestor")}. Looking for notable ancestors…`);
+            } else if (status.stage === "notable-descendants") {
+                this.setProgress("Looking for notable descendants…");
+            } else if (status.stage === "cousins") {
+                data.searchedTo = status.generation - 1;
+                const label = nr.ancestralGroup("cousin", status.generation).groupHeading.replace(/^Shared /, "");
+                const part = status.queries > 1 ? ` (part ${status.query} of ${status.queries})` : "";
+                this.setProgress(
+                    `Searching descendants of the ${label}, generation ${status.generation} of ${gens}${part}…`
+                );
+            }
+        };
+
+        let result = null;
+        try {
+            result = await nr.searchAncestral({
+                rootId: root.id,
+                rootWtId: root.wtId,
+                generations: gens,
+                api: this.api,
+                signal,
+                onStatus: say,
+                onFound: async (found) => {
+                    const profiles = await nr.fetchProfiles(found.ids, { api: this.api, signal });
+                    data.records.push(...nr.buildAncestralRecords({ ...found, profiles }));
+                    if (this.data === data) this.showResults();
+                },
+            });
+        } catch (err) {
+            if (!(this.isStopping && signal.aborted)) throw err;
+        }
+        this.showStop(false);
+        if (result) {
+            data.searchedTo = result.generations;
+            data.dataDate = result.dataDate;
+            data.failedQueries = result.failedQueries;
+            data.isPartial = result.isPartial;
+            data.isDone = true;
+            NotableRelativesView.cache.set(key, data); // a stopped search is not kept, so it can be run again
+        } else {
+            data.isStopped = true;
+        }
+        if (this.data === data) this.showResults();
+    }
+
+    // ---------- within 7 degrees ----------
+
+    async loadCc7(signal) {
+        const key = this.cacheKey();
+        this.setSummary("Looking for notable relatives…");
+        const root = await this.loadRoot(signal);
+        this.setSummary(`Looking for notable relatives of ${esc(root.name)}…`);
 
         let plusLine = "Asking WikiTree+ for notable profiles…";
         let cc7Line = "Loading relatives within 7 degrees…";
         const show = () => this.setProgress(`${plusLine}<br />${cc7Line}`);
         show();
 
-        const plusPromise = nr.fetchPlusNotableIds(root.Name, { signal }).then((plus) => {
+        const plusPromise = nr.fetchPlusNotableIds(root.wtId, { signal }).then((plus) => {
             plusLine = `WikiTree+ found ${plural(plus.ids.length, "notable profile")}.`;
             show();
             return plus;
         });
         const cc7Promise = nr
             .fetchCc7(this.personId, {
-                api,
+                api: this.api,
                 signal,
                 onProgress: (n, degree) => {
                     cc7Line = `Loading relatives, degree ${degree} of 7… ${fmt(n)} so far`;
@@ -137,27 +294,32 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         let profiles = new Map();
         if (plus.ids.length) {
             this.setProgress(`${plusLine}<br />${cc7Line}<br />Reading the notable profiles…`);
-            profiles = await nr.fetchProfiles(plus.ids, { api, signal });
+            profiles = await nr.fetchProfiles(plus.ids, { api: this.api, signal });
         }
         const records = nr.buildRecords({ notableIds: plus.ids, cc7: cc7.people, profiles, rootId: this.personId });
 
-        this.data = {
-            root: { id: this.personId, wtId: root.Name, name: rootName },
+        const data = {
+            mode: "cc7",
+            root,
             records,
             dataDate: plus.dataDate,
             isPartial: cc7.isPartial,
             cc7Count: cc7.people.size,
+            isDone: true,
         };
-        NotableRelativesView.cache.set(this.personId, this.data);
+        NotableRelativesView.cache.set(key, data);
         if (this.controller?.signal !== signal) return;
+        this.data = data;
+        this.setProgress("");
         this.showResults();
-        await this.findMissingDegrees(api, signal);
+        await this.findMissingDegrees(this.api, signal);
     }
 
     // Notables WikiTree+ lists in the CC7 that the getPeople walk did not reach (usually because, without a login,
     // it does not go on past living, privacy-limited profiles). One getConnections lookup each, a few at a time.
     async findMissingDegrees(api, signal) {
-        const missing = this.data.records.filter((r) => r.degree === null && !r.isConnectionTried);
+        const data = this.data;
+        const missing = data.records.filter((r) => r.degree === null && !r.isConnectionTried);
         if (!missing.length) return;
         let done = 0;
         const total = missing.length;
@@ -173,7 +335,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 const r = queue.shift();
                 r.isConnectionTried = true;
                 try {
-                    nr.applyConnection(r, await nr.fetchConnection(this.data.root.wtId, r.wtId, { api, signal }));
+                    nr.applyConnection(r, await nr.fetchConnection(data.root.wtId, r.wtId, { api, signal }));
                 } catch (err) {
                     if (err?.name === "AbortError") return;
                     console.warn(`Notable Relatives: no connection for ${r.wtId}`, err);
@@ -185,9 +347,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         await Promise.all([worker(), worker(), worker()]);
         if (signal.aborted || this.controller?.signal !== signal) return;
         this.setProgress("");
-        const filters = this.container.querySelector(".nr-filters");
-        if (!filters?.contains(document.activeElement)) this.renderFilters();
-        this.renderResults();
+        this.showResults();
     }
 
     // ---------- rendering ----------
@@ -202,39 +362,64 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         if (el) el.innerHTML = html;
     }
 
+    showStop(isShown) {
+        this.container?.querySelector(".nr-stop")?.classList.toggle("hidden", !isShown);
+    }
+
     showResults() {
-        const { root, records, dataDate, isPartial, cc7Count } = this.data;
-        this.setProgress("");
-        const rootLink = `<a href="${WIKI}${encodeURIComponent(root.wtId)}" target="_blank">${esc(root.name)}</a>`;
-        const asOf = dataDate ? ` WikiTree+ data as of ${esc(dataDate)}.` : "";
-        this.setSummary(
-            `${plural(records.length, "notable relative")} within 7 degrees of ${rootLink}` +
-                ` (out of ${fmt(cc7Count)} relatives).${asOf}`
-        );
-        if (isPartial) {
+        const d = this.data;
+        const rootLink = `<a href="${WIKI}${encodeURIComponent(d.root.wtId)}" target="_blank">${esc(d.root.name)}</a>`;
+        const asOf = d.dataDate ? ` WikiTree+ data as of ${esc(d.dataDate)}.` : "";
+        const count = plural(d.records.length, "notable relative");
+        if (d.mode === "cc7") {
+            this.setSummary(`${count} within 7 degrees of ${rootLink} (out of ${fmt(d.cc7Count)} relatives).${asOf}`);
+        } else {
+            const reach = d.isDone
+                ? `up to ${d.gens} generations back`
+                : d.isStopped
+                  ? `up to ${d.searchedTo} generation${d.searchedTo === 1 ? "" : "s"} back`
+                  : "so far";
+            const stopped = d.isStopped ? "; search stopped" : "";
+            this.setSummary(
+                `${count} of ${rootLink} through shared ancestors ${reach}` +
+                    ` (${plural(d.ancestorCount, "ancestor")} searched${stopped}).${asOf}`
+            );
+            if (d.isDone || d.isStopped) this.setProgress("");
+        }
+        if (d.isPartial || d.failedQueries) {
             wtViewRegistry.showWarning(
-                "WikiTree stopped before listing every relative, so some degrees may be missing. Try again later."
+                d.failedQueries
+                    ? `WikiTree+ did not answer ${plural(d.failedQueries, "search")}, so some relatives may be missing.`
+                    : "WikiTree stopped before listing every relative, so some may be missing. Try again later."
             );
         }
-        if (!records.length) {
-            this.container.querySelector(".nr-results").innerHTML = `
-                <p class="nr-empty">No notable profiles were found within 7 degrees of ${rootLink}.
-                Notable profiles carry a template such as
-                <a href="https://www.wikitree.com/wiki/Template:Notability" target="_blank">Notability</a>
-                or the Notables Sticker. WikiTree+ is updated every few days, so a newly added template may
-                not show yet.</p>`;
+
+        if (!d.records.length) {
+            this.container.querySelector(".nr-filters").classList.add("hidden");
+            const tip =
+                d.mode === "cc7"
+                    ? "Try the shared-ancestors search."
+                    : d.gens < nr.MAX_GENERATIONS
+                      ? "Try more generations back."
+                      : "";
+            this.container.querySelector(".nr-results").innerHTML =
+                d.isDone || d.isStopped
+                    ? `<p class="nr-empty">No notable relatives were found for ${rootLink}. Notable profiles carry a
+                        template such as
+                        <a href="https://www.wikitree.com/wiki/Template:Notability" target="_blank">Notability</a>
+                        or the Notables Sticker. ${tip} WikiTree+ is updated every few days, so a newly added template
+                        may not show yet.</p>`
+                    : "";
             return;
         }
-        this.renderFilters();
+        const filters = this.container.querySelector(".nr-filters");
+        if (!filters.contains(document.activeElement)) this.renderFilters();
         this.renderResults();
     }
 
     renderFilters() {
         const f = nr.facets(this.data.records);
         const el = this.container.querySelector(".nr-filters");
-        const degreeLabel = (d) => (d === "unknown" ? "Unknown" : d === 0 ? "Self" : d);
-        const degreeOrder = (d) => (d === "unknown" ? 99 : d);
-        const degrees = [...f.degrees].sort((a, b) => degreeOrder(a[0]) - degreeOrder(b[0]));
         const notablesCats = f.categories.filter(([c]) => /notables?\b/i.test(c));
         const otherCats = f.categories.filter(([c]) => !/notables?\b/i.test(c));
         const opts = (list, selected, label = (v) => v) =>
@@ -244,16 +429,18 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                         `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(label(v))} (${fmt(n)})</option>`
                 )
                 .join("");
+        const isAnc = this.data.mode === "anc";
 
         el.innerHTML = `
-            <fieldset class="nr-degrees">
-                <legend>Degree</legend>
-                ${degrees
+            <fieldset class="nr-groups">
+                <legend>${isAnc ? "Show" : "Degree"}</legend>
+                ${isAnc ? `<span class="nr-groups-hint">Shared ancestors by generation:</span>` : ""}
+                ${f.groups
                     .map(
-                        ([d, n]) => `
-                    <label title="${plural(n, "notable relative")}">
-                        <input type="checkbox" value="${d}" ${this.filters.degrees.has(d) ? "checked" : ""} />
-                        ${degreeLabel(d)} <span class="nr-count">${fmt(n)}</span>
+                        (g) => `
+                    <label title="${esc(g.heading)} (${plural(g.count, "notable relative")})">
+                        <input type="checkbox" value="${esc(g.key)}" ${this.filters.groups.has(g.key) ? "checked" : ""} />
+                        ${esc(g.short)} <span class="nr-count">${fmt(g.count)}</span>
                     </label>`
                     )
                     .join("")}
@@ -290,15 +477,21 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             </div>`;
         el.classList.remove("hidden");
 
+        // Put the "generations back" hint after the ancestor and descendant boxes, before the numbers.
+        const hint = el.querySelector(".nr-groups-hint");
+        const firstNumber = [...el.querySelectorAll(".nr-groups input")].find((cb) => /^g\d+$/.test(cb.value));
+        if (hint && firstNumber) firstNumber.closest("label").before(hint);
+        else hint?.remove();
+
         const $el = $(el);
         if ($.fn.select2) {
             $el.find(".nr-category, .nr-country").select2({ width: "100%" });
         }
-        $el.find(".nr-degrees input").on("change", () => {
-            this.filters.degrees = new Set(
+        $el.find(".nr-groups input").on("change", () => {
+            this.filters.groups = new Set(
                 $el
-                    .find(".nr-degrees input:checked")
-                    .map((i, cb) => (cb.value === "unknown" ? "unknown" : Number(cb.value)))
+                    .find(".nr-groups input:checked")
+                    .map((i, cb) => cb.value)
                     .get()
             );
             this.onFiltersChanged();
@@ -320,7 +513,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         });
         $el.find(".nr-csv").on("click", () => this.downloadCsv());
         $el.find(".nr-toggle").on("click", (e) => {
-            const sections = this.container.querySelectorAll(".nr-degree");
+            const sections = this.container.querySelectorAll(".nr-group");
             const open = e.target.textContent === "Expand all";
             sections.forEach((s) => (s.open = open));
             e.target.textContent = open ? "Collapse all" : "Expand all";
@@ -333,6 +526,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     }
 
     onFiltersChanged() {
+        this.shown = new Map();
         this.writeParams();
         this.renderResults();
     }
@@ -353,28 +547,43 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             results.innerHTML = `${head}<p class="nr-empty">No notable relatives match these filters.</p>`;
             return;
         }
+        const closed = new Set([...results.querySelectorAll(".nr-group:not([open])")].map((el) => el.dataset.key));
         results.innerHTML =
             head +
             nr
-                .groupByDegree(list)
-                .map(
-                    ([degree, people]) => `
-                <details class="nr-degree" open>
+                .groupRecords(list)
+                .map((g) => {
+                    const limit = this.shown.get(g.key) || PAGE_SIZE;
+                    const visible = g.records.slice(0, limit);
+                    const rest = g.records.length - visible.length;
+                    return `
+                <details class="nr-group" data-key="${esc(g.key)}" ${closed.has(g.key) ? "" : "open"}>
                     <summary>
-                        <span class="nr-degree-name">${this.degreeHeading(degree)}</span>
-                        <span class="nr-count">${plural(people.length, "notable relative")}</span>
+                        <span class="nr-group-name">${esc(g.heading)}</span>
+                        ${g.note ? `<span class="nr-group-note">${esc(g.note)}</span>` : ""}
+                        <span class="nr-count">${plural(g.records.length, "notable relative")}</span>
                     </summary>
-                    <div class="nr-grid">${people.map((r) => this.card(r)).join("")}</div>
-                </details>`
-                )
+                    <div class="nr-grid">${visible.map((r) => this.card(r)).join("")}</div>
+                    ${
+                        rest
+                            ? `<button type="button" class="small button nr-more-btn" data-key="${esc(g.key)}">
+                                Show ${fmt(Math.min(rest, PAGE_SIZE))} more (${fmt(rest)} not shown)</button>`
+                            : ""
+                    }
+                </details>`;
+                })
                 .join("");
 
-        $(results)
-            .find(".nr-chip-cat")
-            .on("click", (e) => this.pickFromCard("category", e.currentTarget.dataset.value));
-        $(results)
-            .find(".nr-chip-country")
-            .on("click", (e) => this.pickFromCard("country", e.currentTarget.dataset.value));
+        const $r = $(results);
+        $r.find(".nr-chip-cat").on("click", (e) => this.pickFromCard("category", e.currentTarget.dataset.value));
+        $r.find(".nr-chip-country").on("click", (e) => this.pickFromCard("country", e.currentTarget.dataset.value));
+        $r.find(".nr-more-btn").on("click", (e) => {
+            const key = e.currentTarget.dataset.key;
+            this.shown.set(key, (this.shown.get(key) || PAGE_SIZE) + PAGE_SIZE);
+            const y = window.scrollY;
+            this.renderResults();
+            window.scrollTo(0, y);
+        });
     }
 
     pickFromCard(key, value) {
@@ -383,12 +592,6 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         if (select) $(select).val(value).trigger("change.select2");
         this.onFiltersChanged();
         this.container.querySelector(".nr-filters")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
-    degreeHeading(degree) {
-        if (degree === "unknown") return "Degree not found";
-        if (degree === 0) return "Starting profile";
-        return `${degree} degree${degree === 1 ? "" : "s"} away`;
     }
 
     card(r) {
@@ -416,12 +619,18 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             ),
             more ? `<span class="nr-more" title="${esc(r.categories.slice(4).join("\n"))}">+${more} more</span>` : "",
         ].join("");
+        const root = this.data.root;
+        const relLink =
+            r.wtId && r.id !== root.id
+                ? ` · <a class="nr-rel-link" href="${relationshipUrl(root.wtId, r.wtId)}" target="_blank"
+                    title="WikiTree's Relationship Finder for ${esc(root.name)} and ${esc(r.name)}">Relationship</a>`
+                : "";
         return `
             <article class="nr-card">
                 ${photo}
                 <div class="nr-card-body">
                     <a class="nr-name" href="${url}" target="_blank" title="${esc(r.longName || r.name)}">${esc(r.name)}</a>
-                    <div class="nr-rel${r.isBlood ? "" : " nr-rel-marriage"}">${esc(r.relationship)}</div>
+                    <div class="nr-rel${r.isBlood ? "" : " nr-rel-marriage"}">${esc(r.relationship)}${relLink}</div>
                     ${life ? `<div class="nr-life">${life}</div>` : ""}
                     <div class="nr-chips">${chips}</div>
                 </div>
@@ -429,7 +638,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     }
 
     downloadCsv() {
-        const csv = nr.toCsv(nr.groupByDegree(this.filtered()).flatMap(([, list]) => list));
+        const csv = nr.toCsv(nr.groupRecords(this.filtered()).flatMap((g) => g.records));
         const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -443,16 +652,13 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     // ---------- URL parameters ----------
 
     filtersFromParams(params) {
-        const degrees = new Set(
-            String(params.degree || "")
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-                .map((s) => (s === "unknown" ? "unknown" : Number(s)))
-                .filter((d) => d === "unknown" || Number.isInteger(d))
-        );
         return {
-            degrees,
+            groups: new Set(
+                String(params.group || "")
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+            ),
             category: params.cat || "",
             country: params.loc || "",
             place: params.place || "",
@@ -461,13 +667,15 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         };
     }
 
-    // Keeps the filters in the address so a filtered list can be shared. replaceState does not fire
+    // Keeps the search and filters in the address so a list can be shared. replaceState does not fire
     // "hashchange", so the Tree App does not reload the view.
     writeParams() {
         const usp = new URLSearchParams(window.location.hash.slice(1));
         const f = this.filters;
         const values = {
-            degree: [...f.degrees].join(","),
+            mode: this.mode === "cc7" ? "cc7" : "",
+            gens: this.mode === "anc" && this.gens !== nr.DEFAULT_GENERATIONS ? String(this.gens) : "",
+            group: [...f.groups].join(","),
             cat: f.category,
             loc: f.country,
             place: f.place,

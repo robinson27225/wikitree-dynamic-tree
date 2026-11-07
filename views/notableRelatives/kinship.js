@@ -192,3 +192,16 @@ export function relationshipFromSteps(steps, gender) {
     }
     return { label: "related by marriage", isBlood: false };
 }
+
+/** 1 -> "parents", 2 -> "grandparents", 3 -> "great-grandparents", 4 -> "2nd great-grandparents" */
+export function sharedAncestorsLabel(generation) {
+    if (generation === 1) return "parents";
+    return `${greats(generation - 2)}grandparents`;
+}
+
+/** Who someone sharing those ancestors usually is. */
+export function cousinRangeLabel(generation) {
+    if (generation === 1) return "siblings and their descendants";
+    if (generation === 2) return "aunts, uncles, 1st cousins and their descendants";
+    return `${ordinal(generation - 1)} cousins (some removed) and their families`;
+}
