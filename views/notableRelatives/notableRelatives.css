@@ -1,0 +1,230 @@
+/* Notable Relatives view. Every rule is scoped to .nr-view so nothing leaks into other views. */
+
+.nr-view {
+  --nr-green: #25422d;
+  --nr-green-light: #e6efe8;
+  --nr-border: #d4d9d4;
+  --nr-muted: #5c635d;
+  --nr-gold: #8a6d1d;
+  --nr-gold-light: #fbf3dc;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 12px 24px;
+  text-align: left;
+}
+
+.nr-view .nr-header {
+  margin: 8px 0 12px;
+}
+.nr-view .nr-title {
+  margin: 0 0 4px;
+}
+.nr-view .nr-summary {
+  margin: 0;
+}
+.nr-view .nr-progress {
+  color: var(--nr-muted);
+  margin: 8px 0;
+  min-height: 1em;
+}
+.nr-view .hidden {
+  display: none;
+}
+
+/* Filters */
+.nr-view .nr-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 14px;
+  align-items: end;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--nr-border);
+  border-radius: 8px;
+  background: #f7f9f7;
+}
+.nr-view .nr-filters.hidden {
+  display: none;
+}
+.nr-view .nr-degrees {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.nr-view .nr-degrees legend {
+  font-weight: bold;
+  margin-right: 8px;
+  float: left;
+}
+.nr-view .nr-degrees label {
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nr-view .nr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-weight: bold;
+  font-size: 0.9em;
+}
+.nr-view .nr-field select,
+.nr-view .nr-field input {
+  font-weight: normal;
+  font-size: 1em;
+  padding: 4px 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.nr-view .nr-wide {
+  grid-column: span 2;
+}
+.nr-view .nr-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nr-view .nr-count {
+  color: var(--nr-muted);
+  font-weight: normal;
+  font-size: 0.9em;
+}
+
+/* Results */
+.nr-view .nr-showing {
+  color: var(--nr-muted);
+  margin: 4px 0 8px;
+}
+.nr-view .nr-empty {
+  padding: 16px;
+  border: 1px dashed var(--nr-border);
+  border-radius: 8px;
+}
+.nr-view .nr-degree {
+  margin-bottom: 14px;
+  border: 1px solid var(--nr-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.nr-view .nr-degree > summary {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: var(--nr-green-light);
+  border-radius: 8px;
+}
+.nr-view .nr-degree[open] > summary {
+  border-radius: 8px 8px 0 0;
+}
+.nr-view .nr-degree-name {
+  font-weight: bold;
+  font-size: 1.1em;
+  color: var(--nr-green);
+}
+.nr-view .nr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  padding: 10px;
+}
+.nr-view .nr-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--nr-border);
+  border-radius: 6px;
+}
+.nr-view .nr-photo {
+  flex: 0 0 60px;
+  width: 60px;
+  height: 75px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--nr-green-light);
+}
+.nr-view .nr-photo-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6em;
+  color: var(--nr-green);
+}
+.nr-view .nr-card-body {
+  min-width: 0;
+}
+.nr-view .nr-name {
+  font-weight: bold;
+  font-size: 1.05em;
+}
+.nr-view .nr-rel {
+  color: var(--nr-green);
+  font-style: italic;
+  margin: 2px 0;
+}
+.nr-view .nr-rel-marriage {
+  color: var(--nr-muted);
+}
+.nr-view .nr-life {
+  font-size: 0.9em;
+  color: #333;
+  margin-bottom: 4px;
+}
+.nr-view .nr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.nr-view .nr-chip,
+.nr-view .nr-marker,
+.nr-view .nr-more {
+  font-size: 0.8em;
+  line-height: 1.3;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--nr-border);
+  background: #f4f6f4;
+  color: #333;
+}
+.nr-view .nr-chip {
+  cursor: pointer;
+  font-family: inherit;
+}
+.nr-view .nr-chip:hover,
+.nr-view .nr-chip:focus-visible {
+  border-color: var(--nr-green);
+  color: var(--nr-green);
+}
+.nr-view .nr-chip-country {
+  background: #eef3fb;
+}
+.nr-view .nr-marker {
+  border-color: #e3cf94;
+  background: var(--nr-gold-light);
+  color: var(--nr-gold);
+}
+.nr-view .nr-more {
+  border-style: dashed;
+  cursor: help;
+}
+.nr-view .nr-footer {
+  margin-top: 20px;
+  padding-top: 10px;
+  border-top: 1px solid var(--nr-border);
+  font-size: 0.9em;
+  color: var(--nr-muted);
+}
+
+@media (max-width: 600px) {
+  .nr-view .nr-wide {
+    grid-column: auto;
+  }
+  .nr-view .nr-grid {
+    grid-template-columns: 1fr;
+  }
+}
