@@ -53,6 +53,12 @@ is closer than the blood link, the marriage comes first, e.g. "husband (also 2nd
 The search and filters are kept in the URL hash (`mode`, `gens`, `group`, `cat`, `loc`, `place`, `marker`, `q`), so a
 list can be shared. Finished searches are kept in memory, so switching between them is instant.
 
+## Logo
+
+`images/notable-relatives-logo.svg` (on the dark-green tile, shown in the view header) and
+`images/notable-relatives-mark.svg` (no tile), with PNG copies at 512, 192 and 32 px for G2G posts or a free-space
+page. How it was made: `images/logo.brief.md`.
+
 ## Files
 
 | File                   | What it does                                                                      |
@@ -61,6 +67,7 @@ list can be shared. Finished searches are kept in memory, so switching between t
 | `notable_data.js`      | WikiTree+ and API calls, both searches, records, filters, facets, CSV (no DOM)    |
 | `kinship.js`           | Relationship names from parent links or a connection path (no DOM)                |
 | `notableRelatives.css` | Styles, all scoped under `.nr-view`                                               |
+| `images/`              | The logo (SVG and PNG) and its brief                                              |
 | `test/`                | `node --test views/notableRelatives/test/` (Node 22 or later, nothing to install) |
 
 ## Uploading to the Apps server

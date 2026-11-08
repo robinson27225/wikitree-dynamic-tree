@@ -16,6 +16,16 @@
 .nr-view .nr-header {
   margin: 8px 0 12px;
 }
+.nr-view .nr-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nr-view .nr-logo {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+}
 .nr-view .nr-title {
   margin: 0 0 4px;
 }

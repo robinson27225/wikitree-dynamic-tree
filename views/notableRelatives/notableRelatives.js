@@ -61,7 +61,10 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         this.container.innerHTML = `
             <div class="nr-view">
                 <div class="nr-header">
-                    <h2 class="nr-title">Notable Relatives</h2>
+                    <div class="nr-brand">
+                        <img class="nr-logo" src="views/notableRelatives/images/notable-relatives-logo.svg" alt="" width="48" height="48" />
+                        <h2 class="nr-title">Notable Relatives</h2>
+                    </div>
                     <div class="nr-modes" role="radiogroup" aria-label="Which relatives">
                         <label><input type="radio" name="nr-mode" value="anc" ${this.mode === "anc" ? "checked" : ""} />
                             Shared ancestors, up to
