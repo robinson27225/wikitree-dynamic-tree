@@ -21,5 +21,11 @@ Finder.
 -   Filters by group, category, country, place, notable template, and name, kept in the address so a list can be
     shared. CSV download.
 -   Logo (a gold star in a family tree) in the view header.
+-   If WikiTree starts limiting requests ("Limit exceeded.") part way through a long search, the relatives found so
+    far stay on screen with a note to wait a few minutes; a refused batch of profiles is reported, never dropped
+    silently.
+-   **Apps Login fix (shared Tree Apps code, `index.js` and `tree.js`):** the Apps Login button and the login check
+    after signing in now send an app name. Without one, the WikiTree API answers `[{ "status": "Limit exceeded." }]`
+    (HTTP 429) and the login never starts.
 -   Version, **Created by Robinson-27225** (links to the author's profile), and **Help** (links to
     [Space:Notable_Relatives](https://www.wikitree.com/wiki/Space:Notable_Relatives)) at the bottom of the view.

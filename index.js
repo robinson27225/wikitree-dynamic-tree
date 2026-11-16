@@ -22,6 +22,7 @@ window.addEventListener("DOMContentLoaded", (event) => {
             onUnlogged: () => {
                 document.querySelector("#wt-api-login").innerHTML = `
           <form id="appsLoginForm" action="https://api.wikitree.com/api.php" method="POST">
+              <input type="hidden" name="appId" value="TA-LoginManager">
               <input type="hidden" name="action" value="clientLogin">
               <input type="hidden" id="returnURL" name="returnURL" value="${window.location.href}">
               <input type="submit" class="small" value="Apps Login"

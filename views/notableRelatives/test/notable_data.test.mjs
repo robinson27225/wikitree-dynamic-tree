@@ -460,3 +460,19 @@ test("buildAncestralRecords labels each kind", () => {
     const sorted = groupRecords([cousin, old, gran, build("descendant", [10])]).map((g) => g.key);
     assert.deepEqual(sorted, ["anc", "desc", "g9", "anc-far"]);
 });
+
+test("rate limits are recognised and never drop notables silently", async () => {
+    const { isLimitError, LIMIT_MESSAGE } = await import("../notable_data.js");
+    assert.equal(isLimitError("Limit exceeded."), true);
+    assert.equal(isLimitError(new Error("HTTP error! Status: 429: Too Many Requests")), true);
+    assert.equal(isLimitError(new Error("HTTP error! Status: 500: Server Error")), false);
+    assert.match(LIMIT_MESSAGE, /Wait a few minutes/);
+
+    const limited = async () => [{ status: "Limit exceeded." }];
+    await assert.rejects(
+        fetchProfiles([1, 2], { api: limited }),
+        /could not read the notable profiles: Limit exceeded/
+    );
+    const fine = async () => [{ status: "", people: { 1: { Id: 1, Name: "A-1" } } }];
+    assert.equal((await fetchProfiles([1], { api: fine })).size, 1);
+});

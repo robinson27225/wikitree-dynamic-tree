@@ -207,7 +207,20 @@ function addTreePerson(people, p, askedDegree, isExact = false) {
     });
 }
 
-/** Full details for the given ids, in chunks the API accepts. @returns {Promise<Map<number, object>>} */
+/** True for WikiTree's rate limit: the API's "Limit exceeded." status, or HTTP 429 from postToAPI. */
+export function isLimitError(errOrStatus) {
+    const text = String(errOrStatus?.message ?? errOrStatus ?? "");
+    return /limit exceeded|status: 429/i.test(text);
+}
+
+export const LIMIT_MESSAGE =
+    "WikiTree is limiting requests from this computer for a while (Limit exceeded). " +
+    "Wait a few minutes and try again, or choose fewer generations.";
+
+/**
+ * Full details for the given ids, in chunks the API accepts. @returns {Promise<Map<number, object>>}
+ * A chunk WikiTree refuses (for example "Limit exceeded.") is an error, so notables are never dropped silently.
+ */
 export async function fetchProfiles(ids, { api, signal } = {}) {
     const profiles = new Map();
     for (let i = 0; i < ids.length; i += PROFILE_CHUNK) {
@@ -216,7 +229,10 @@ export async function fetchProfiles(ids, { api, signal } = {}) {
             { appId: APP_ID, action: "getPeople", keys: keys.join(","), fields: PROFILE_FIELDS.join(",") },
             signal
         );
-        for (const p of Object.values(result?.[0]?.people || {})) {
+        const status = String(result?.[0]?.status || "");
+        const people = Object.values(result?.[0]?.people || {});
+        if (status && !people.length) throw new Error(`WikiTree could not read the notable profiles: ${status}`);
+        for (const p of people) {
             const id = Number(p?.Id);
             if (id) profiles.set(id, p);
         }

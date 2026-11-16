@@ -166,7 +166,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             this.setProgress("");
             this.setSummary("");
             this.showStop(false);
-            wtViewRegistry.showError(err?.message || String(err));
+            wtViewRegistry.showError(nr.isLimitError(err) ? nr.LIMIT_MESSAGE : err?.message || String(err));
         });
     }
 
@@ -254,7 +254,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 },
             });
         } catch (err) {
-            if (!(this.isStopping && signal.aborted)) throw err;
+            // Keep what was found when WikiTree starts limiting requests part way through a long search.
+            if (nr.isLimitError(err) && data.records.length) data.isLimited = true;
+            else if (!(this.isStopping && signal.aborted)) throw err;
         }
         this.showStop(false);
         if (result) {
@@ -266,6 +268,10 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             NotableRelativesView.cache.set(key, data); // a stopped search is not kept, so it can be run again
         } else {
             data.isStopped = true;
+            if (data.isLimited) {
+                this.setProgress("");
+                wtViewRegistry.showWarning(`${nr.LIMIT_MESSAGE} The relatives found so far are shown.`);
+            }
         }
         if (this.data === data) this.showResults();
     }
@@ -343,6 +349,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             );
         say();
         const queue = [...missing];
+        let isLimited = false;
         const worker = async () => {
             while (queue.length && !signal.aborted) {
                 const r = queue.shift();
@@ -351,7 +358,12 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                     nr.applyConnection(r, await nr.fetchConnection(data.root.wtId, r.wtId, { api, signal }));
                 } catch (err) {
                     if (err?.name === "AbortError") return;
-                    console.warn(`Notable Relatives: no connection for ${r.wtId}`, err);
+                    if (nr.isLimitError(err)) {
+                        queue.length = 0; // stop asking; the rest keep "Degree not found"
+                        isLimited = true;
+                    } else {
+                        console.warn(`Notable Relatives: no connection for ${r.wtId}`, err);
+                    }
                 }
                 done++;
                 say();
@@ -361,6 +373,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         if (signal.aborted || this.controller?.signal !== signal) return;
         this.setProgress("");
         this.showResults();
+        if (isLimited) wtViewRegistry.showWarning(`${nr.LIMIT_MESSAGE} Some degrees could not be found.`);
     }
 
     // ---------- rendering ----------

@@ -415,7 +415,10 @@ window.LoginManager = class LoginManager {
             this.events?.onLoggedIn(this.user);
         } else if (authcode) {
             // user is not logged in yet, but we've received authcode
-            this.wtAPI.postToAPI({ action: "clientLogin", authcode: authcode }).then((data) => this.onAuth(data));
+            // An appId is needed: the API answers requests without one with "Limit exceeded." (HTTP 429).
+            this.wtAPI
+                .postToAPI({ appId: "LoginManager", action: "clientLogin", authcode: authcode })
+                .then((data) => this.onAuth(data));
         } else {
             this.events?.onUnlogged();
         }
