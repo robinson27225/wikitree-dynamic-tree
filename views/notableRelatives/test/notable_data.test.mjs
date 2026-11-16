@@ -476,3 +476,93 @@ test("rate limits are recognised and never drop notables silently", async () => 
     const fine = async () => [{ status: "", people: { 1: { Id: 1, Name: "A-1" } } }];
     assert.equal((await fetchProfiles([1], { api: fine })).size, 1);
 });
+
+// ---------- 0.2.0 ----------
+
+import {
+    fetchAllNotableIds,
+    resetAllNotableIds,
+    notablesInCc7,
+    withRetry,
+    isNetworkError,
+    DIRECT_LINE_GROUPS,
+} from "../notable_data.js";
+
+test("fetchAllNotableIds pages through every notable profile and asks only once", async () => {
+    resetAllNotableIds();
+    const urls = [];
+    const fetchFn = async (u) => {
+        urls.push(u);
+        const index = Number(/PageIdx=(\d+)/.exec(u)[1]);
+        const profiles = index === 0 ? Array.from({ length: 100000 }, (_, i) => i + 1) : [200001, 200002];
+        return {
+            ok: true,
+            json: async () => ({ response: { found: 100002, profiles }, debug: { dataDate: "2026-11-08" } }),
+        };
+    };
+    const res = await fetchAllNotableIds({ fetchFn });
+    assert.equal(res.ids.size, 100002);
+    assert.ok(res.ids.has(200002));
+    assert.equal(res.dataDate, "2026-11-08");
+    assert.equal(urls.length, 2);
+    assert.match(urls[0], /Query=NotableProfile&MaxProfiles=1000000&PageSize=100000&PageIdx=0/);
+    await fetchAllNotableIds({ fetchFn });
+    assert.equal(urls.length, 2, "the list is kept for the page");
+    resetAllNotableIds();
+});
+
+test("notablesInCc7 finds notables the WikiTree+ CC7 misses behind a private profile", () => {
+    // Palotay-1 -> private husband -> Andrew -> Imre -> Miklós -> Albert (Szent-Györgyi-5, notable, degree 5)
+    const cc7 = new Map([
+        [1, { id: 1, degree: 0 }],
+        [2, { id: 2, degree: 1 }],
+        [3, { id: 3, degree: 2 }],
+        [6, { id: 6, degree: 5 }],
+    ]);
+    const all = new Set([6, 99, 1]);
+    assert.deepEqual(notablesInCc7(cc7, all, [], 1), [6]);
+    assert.deepEqual(notablesInCc7(cc7, all, [6, 50], 1).sort(), [50, 6].sort(), "WikiTree+ CC7 ids are added once");
+});
+
+test("withRetry tries again when the connection drops, but not for other errors", async () => {
+    let calls = 0;
+    const flaky = async () => {
+        calls++;
+        if (calls < 3) throw new TypeError("Failed to fetch");
+        return "ok";
+    };
+    assert.equal(await withRetry(flaky, { delays: [1, 1] }), "ok");
+    assert.equal(calls, 3);
+
+    let other = 0;
+    await assert.rejects(
+        withRetry(
+            async () => {
+                other++;
+                throw new Error("WikiTree could not read the notable profiles: Limit exceeded.");
+            },
+            { delays: [1, 1] }
+        ),
+        /Limit exceeded/
+    );
+    assert.equal(other, 1);
+
+    await assert.rejects(
+        withRetry(
+            async () => {
+                throw new TypeError("Failed to fetch");
+            },
+            { delays: [1] }
+        ),
+        /Failed/
+    );
+    assert.ok(isNetworkError(new TypeError("Failed to fetch")));
+    assert.ok(isNetworkError(new TypeError("NetworkError when attempting to fetch resource.")));
+    assert.ok(isNetworkError(new TypeError("Load failed")));
+    assert.ok(!isNetworkError({ name: "AbortError", message: "Failed to fetch" }));
+    assert.ok(!isNetworkError(new Error("Limit exceeded.")));
+});
+
+test("the direct line groups are the ancestor and descendant groups", () => {
+    assert.deepEqual([...DIRECT_LINE_GROUPS].sort(), ["anc", "anc-far", "desc"]);
+});

@@ -5,7 +5,21 @@ to the author's profile and the Help page. To release: change `VERSION` in `nota
 test checks they agree), then upload. A fix raises the last number, a new feature the middle one. Documentation-only
 changes (README, Space page drafts) don't get a new version.
 
-## 0.1.0 (Not yet released)
+## 0.2.0 (Not yet released)
+
+Fixes and requests from the first testers on G2G.
+
+-   **Everyone within 7 degrees now finds notables reached through a private profile.** WikiTree+'s own CC7 list stops
+    at private profiles, so a notable 5 degrees away through a living spouse could be missed, logged in or not. The app
+    now matches everyone within 7 degrees against WikiTree+'s list of all notable profiles. Reported by J Palotay
+    (Palotay-1) and Helena Dalroth (Dalroth-3).
+-   **"Direct line only" button** in the shared ancestors search shows just the notable ancestors and descendants, with
+    no cousins. Requested by A. Groesser.
+-   **Dropped connections no longer end a long search.** When the internet connection drops ("Failed to fetch"), the app
+    tries again twice, and if it still fails it keeps the relatives found so far and says what happened. Reported by
+    Debra Akin.
+
+## 0.1.0 (16 November 2026)
 
 The first version, for testers. Idea by Blake Ashton (Ashton-4458) on G2G, 7 November 2026, inspired by Relative
 Finder.

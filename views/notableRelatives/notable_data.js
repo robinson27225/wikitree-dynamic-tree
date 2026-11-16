@@ -8,7 +8,9 @@
  *   the notable descendants ("Descendants=<id> NotableProfile") and, one generation at a time, the notable
  *   descendants of each generation of ancestors ("Descendants=<ancestor> NotableProfile OR ..."). A notable is
  *   grouped by the first generation whose ancestors it descends from: its closest shared ancestors.
- * - "Within 7 degrees": WikiTree+ "CC7=<id> NotableProfile", with each relative's degree from getPeople nuclear=7.
+ * - "Within 7 degrees": everyone within 7 degrees from getPeople nuclear=7, matched against WikiTree+'s list of all
+ *   notable profiles ("NotableProfile"). WikiTree+'s own "CC7=<id>" stops at private profiles, so on its own it
+ *   misses notables reached through a private relative; its "CC7=<id> NotableProfile" answer is still added in.
  *
  * NotableProfile means any notable template, so it includes every "Notability" and "Notables Sticker" profile.
  * WikiTree+ returns profile ids only; a getPeople call gives the notables' details, categories and templates.
@@ -27,7 +29,7 @@ import {
 
 // Semantic version (major.minor.patch), 0.x while the app is in beta. Raise it with every upload and add an entry to
 // CHANGELOG.md; a test checks the two agree. A fix raises the last number, a new feature the middle one.
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 export const AUTHOR_ID = "Robinson-27225";
 export const AUTHOR_URL = `https://www.wikitree.com/wiki/${AUTHOR_ID}`;
 export const HELP_URL = "https://www.wikitree.com/wiki/Space:Notable_Relatives";
@@ -72,16 +74,18 @@ export const MARKERS = {
 
 // ---------- WikiTree+ ----------
 
-export function plusSearchUrl(query, appId = PLUS_APP_ID) {
+export function plusSearchUrl(query, appId = PLUS_APP_ID, page = null) {
+    const paging = page ? `&PageSize=${page.size}&PageIdx=${page.index}` : "";
     return (
         "https://plus.wikitree.com/function/WTWebProfileSearch/" +
-        `${appId}.json?Query=${encodeURIComponent(query)}&MaxProfiles=100000&Format=JSON&appID=${appId}`
+        `${appId}.json?Query=${encodeURIComponent(query)}&MaxProfiles=${page ? 1000000 : 100000}${paging}` +
+        `&Format=JSON&appID=${appId}`
     );
 }
 
 /** Profile ids matching a WikiTree+ query. @returns {Promise<{ids:number[], dataDate:string}>} */
 export async function fetchPlusIds(query, { fetchFn = fetch, signal } = {}) {
-    const res = await fetchFn(plusSearchUrl(query), { signal });
+    const res = await withRetry(() => fetchFn(plusSearchUrl(query), { signal }), { signal });
     if (!res.ok) throw new Error(`The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`);
     const json = await res.json();
     return {
@@ -93,6 +97,44 @@ export async function fetchPlusIds(query, { fetchFn = fetch, signal } = {}) {
 /** Ids of the notable profiles within 7 degrees of wtId (a WikiTree ID such as "Windsor-1"). */
 export function fetchPlusNotableIds(wtId, options = {}) {
     return fetchPlusIds(`CC7=${wtId} NotableProfile`, options);
+}
+
+const ALL_NOTABLES_PAGE = 100000; // WikiTree+ returns at most 100,000 ids per answer
+let allNotablesPromise = null;
+
+/**
+ * The ids of every notable profile on WikiTree (about 111,000, under 1 MB), asked once per page load.
+ * @returns {Promise<{ids:Set<number>, dataDate:string}>}
+ */
+export function fetchAllNotableIds({ fetchFn = fetch, signal } = {}) {
+    if (!allNotablesPromise) {
+        allNotablesPromise = (async () => {
+            const ids = new Set();
+            let dataDate = "";
+            for (let index = 0; index < 10; index++) {
+                const url = plusSearchUrl("NotableProfile", PLUS_APP_ID, { size: ALL_NOTABLES_PAGE, index });
+                const res = await withRetry(() => fetchFn(url, { signal }), { signal });
+                if (!res.ok)
+                    throw new Error(
+                        `The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`
+                    );
+                const json = await res.json();
+                const page = (json?.response?.profiles || []).map(Number).filter(Boolean);
+                page.forEach((id) => ids.add(id));
+                dataDate = dataDate || json?.debug?.dataDate || "";
+                const found = Number(json?.response?.found) || 0;
+                if (page.length < ALL_NOTABLES_PAGE || ids.size >= found) break;
+            }
+            return { ids, dataDate };
+        })();
+        allNotablesPromise.catch(() => (allNotablesPromise = null)); // a failed download is tried again next time
+    }
+    return allNotablesPromise;
+}
+
+/** Forgets the downloaded list of notables (for tests). */
+export function resetAllNotableIds() {
+    allNotablesPromise = null;
 }
 
 /**
@@ -139,18 +181,22 @@ export async function fetchByGeneration(
         let start = 0;
         let foundHere = 0;
         for (let page = 0; page < MAX_PAGES; page++) {
-            const result = await api(
-                {
-                    appId: APP_ID,
-                    action: "getPeople",
-                    keys: String(rootId),
-                    [relation]: generation,
-                    minGeneration: generation,
-                    fields: TREE_FIELDS.join(","),
-                    start,
-                    limit: PAGE_LIMIT,
-                },
-                signal
+            const result = await withRetry(
+                () =>
+                    api(
+                        {
+                            appId: APP_ID,
+                            action: "getPeople",
+                            keys: String(rootId),
+                            [relation]: generation,
+                            minGeneration: generation,
+                            fields: TREE_FIELDS.join(","),
+                            start,
+                            limit: PAGE_LIMIT,
+                        },
+                        signal
+                    ),
+                { signal }
             );
             const status = String(result?.[0]?.status || "");
             const got = Object.values(result?.[0]?.people || {});
@@ -180,9 +226,9 @@ export async function fetchByGeneration(
 export async function fetchCc7(rootId, { api, signal, onProgress = () => {}, degrees = MAX_DEGREE } = {}) {
     const people = new Map();
     // minGeneration leaves the starting profile out, and its parents are needed to name relationships.
-    const rootResult = await api(
-        { appId: APP_ID, action: "getPeople", keys: String(rootId), fields: TREE_FIELDS.join(",") },
-        signal
+    const rootResult = await withRetry(
+        () => api({ appId: APP_ID, action: "getPeople", keys: String(rootId), fields: TREE_FIELDS.join(",") }, signal),
+        { signal }
     );
     for (const p of Object.values(rootResult?.[0]?.people || {})) {
         if (Number(p?.Id) === Number(rootId)) addTreePerson(people, p, 0, true);
@@ -207,6 +253,31 @@ function addTreePerson(people, p, askedDegree, isExact = false) {
     });
 }
 
+/** True when the browser lost the connection ("Failed to fetch" in Chrome, "NetworkError" in Firefox, "Load failed" in Safari). */
+export function isNetworkError(err) {
+    if (err?.name === "AbortError") return false;
+    return /failed to fetch|networkerror|network error|load failed|network connection/i.test(
+        String(err?.message ?? err ?? "")
+    );
+}
+
+export const NETWORK_MESSAGE =
+    "The connection to WikiTree dropped (Failed to fetch). Check your internet connection and try again.";
+
+const RETRY_DELAYS = [1500, 4000]; // milliseconds before the second and third tries
+
+/** Runs fn, trying again after a pause when the connection drops. Other errors are not retried. */
+export async function withRetry(fn, { signal, delays = RETRY_DELAYS } = {}) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            if (!isNetworkError(err) || attempt >= delays.length || signal?.aborted) throw err;
+            await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+        }
+    }
+}
+
 /** True for WikiTree's rate limit: the API's "Limit exceeded." status, or HTTP 429 from postToAPI. */
 export function isLimitError(errOrStatus) {
     const text = String(errOrStatus?.message ?? errOrStatus ?? "");
@@ -225,9 +296,13 @@ export async function fetchProfiles(ids, { api, signal } = {}) {
     const profiles = new Map();
     for (let i = 0; i < ids.length; i += PROFILE_CHUNK) {
         const keys = ids.slice(i, i + PROFILE_CHUNK);
-        const result = await api(
-            { appId: APP_ID, action: "getPeople", keys: keys.join(","), fields: PROFILE_FIELDS.join(",") },
-            signal
+        const result = await withRetry(
+            () =>
+                api(
+                    { appId: APP_ID, action: "getPeople", keys: keys.join(","), fields: PROFILE_FIELDS.join(",") },
+                    signal
+                ),
+            { signal }
         );
         const status = String(result?.[0]?.status || "");
         const people = Object.values(result?.[0]?.people || {});
@@ -246,7 +321,10 @@ export async function fetchProfiles(ids, { api, signal } = {}) {
  * @returns {Promise<{degree:number, steps:string[]}|null>}
  */
 export async function fetchConnection(rootWtId, wtId, { api, signal } = {}) {
-    const result = await api({ appId: APP_ID, action: "getConnections", keys: `${rootWtId},${wtId}` }, signal);
+    const result = await withRetry(
+        () => api({ appId: APP_ID, action: "getConnections", keys: `${rootWtId},${wtId}` }, signal),
+        { signal }
+    );
     const res = Array.isArray(result) ? result[0] : result;
     const path = Array.isArray(res?.path) ? res.path : [];
     if (path.length < 2) return null;
@@ -505,6 +583,22 @@ export function ancestralGroup(kind, generation, generations) {
         groupNote: cousinRangeLabel(generation),
     };
 }
+
+/**
+ * The notable relatives within 7 degrees: everyone the API walk reached (cc7) who is on the list of all notables,
+ * then any WikiTree+ CC7 notables the walk did not reach. The starting profile is left out.
+ * @param {Map<number, object>} cc7  @param {Set<number>} allNotables  @param {number[]} plusCc7Ids
+ */
+export function notablesInCc7(cc7, allNotables, plusCc7Ids = [], rootId = 0) {
+    const ids = new Set();
+    for (const id of cc7.keys()) if (allNotables.has(id)) ids.add(id);
+    for (const id of plusCc7Ids) ids.add(Number(id));
+    ids.delete(Number(rootId));
+    return [...ids];
+}
+
+/** Group keys of the direct line (ancestors and descendants) in the shared-ancestors search. */
+export const DIRECT_LINE_GROUPS = ["anc", "desc", "anc-far"];
 
 /**
  * Joins the WikiTree+ ids, the CC7 degrees and the profile details into one record per notable relative.

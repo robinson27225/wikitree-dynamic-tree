@@ -166,7 +166,13 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             this.setProgress("");
             this.setSummary("");
             this.showStop(false);
-            wtViewRegistry.showError(nr.isLimitError(err) ? nr.LIMIT_MESSAGE : err?.message || String(err));
+            wtViewRegistry.showError(
+                nr.isLimitError(err)
+                    ? nr.LIMIT_MESSAGE
+                    : nr.isNetworkError(err)
+                      ? nr.NETWORK_MESSAGE
+                      : err?.message || String(err)
+            );
         });
     }
 
@@ -256,6 +262,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         } catch (err) {
             // Keep what was found when WikiTree starts limiting requests part way through a long search.
             if (nr.isLimitError(err) && data.records.length) data.isLimited = true;
+            else if (nr.isNetworkError(err) && data.records.length) data.isOffline = true;
             else if (!(this.isStopping && signal.aborted)) throw err;
         }
         this.showStop(false);
@@ -271,6 +278,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             if (data.isLimited) {
                 this.setProgress("");
                 wtViewRegistry.showWarning(`${nr.LIMIT_MESSAGE} The relatives found so far are shown.`);
+            } else if (data.isOffline) {
+                this.setProgress("");
+                wtViewRegistry.showWarning(`${nr.NETWORK_MESSAGE} The relatives found so far are shown.`);
             }
         }
         if (this.data === data) this.showResults();
@@ -284,15 +294,20 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         const root = await this.loadRoot(signal);
         this.setSummary(`Looking for notable relatives of ${esc(root.name)}…`);
 
-        let plusLine = "Asking WikiTree+ for notable profiles…";
+        let plusLine = "Asking WikiTree+ for the list of notable profiles…";
         let cc7Line = "Loading relatives within 7 degrees…";
         const show = () => this.setProgress(`${plusLine}<br />${cc7Line}`);
         show();
 
-        const plusPromise = nr.fetchPlusNotableIds(root.wtId, { signal }).then((plus) => {
-            plusLine = `WikiTree+ found ${plural(plus.ids.length, "notable profile")}.`;
+        // WikiTree+'s own CC7 stops at private profiles, so the relatives the API walk reaches are matched against
+        // the list of every notable profile. The WikiTree+ CC7 answer is added for any the walk did not reach.
+        const plusPromise = Promise.all([
+            nr.fetchAllNotableIds({ signal }),
+            nr.fetchPlusNotableIds(root.wtId, { signal }),
+        ]).then(([all, cc7Plus]) => {
+            plusLine = `WikiTree+ lists ${plural(all.ids.size, "notable profile")} in all.`;
             show();
-            return plus;
+            return { all: all.ids, cc7Ids: cc7Plus.ids, dataDate: cc7Plus.dataDate || all.dataDate };
         });
         const cc7Promise = nr
             .fetchCc7(this.personId, {
@@ -309,13 +324,14 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 return cc7;
             });
         const [plus, cc7] = await Promise.all([plusPromise, cc7Promise]);
+        const notableIds = nr.notablesInCc7(cc7.people, plus.all, plus.cc7Ids, this.personId);
 
         let profiles = new Map();
-        if (plus.ids.length) {
+        if (notableIds.length) {
             this.setProgress(`${plusLine}<br />${cc7Line}<br />Reading the notable profiles…`);
-            profiles = await nr.fetchProfiles(plus.ids, { api: this.api, signal });
+            profiles = await nr.fetchProfiles(notableIds, { api: this.api, signal });
         }
-        const records = nr.buildRecords({ notableIds: plus.ids, cc7: cc7.people, profiles, rootId: this.personId });
+        const records = nr.buildRecords({ notableIds, cc7: cc7.people, profiles, rootId: this.personId });
 
         const data = {
             mode: "cc7",
@@ -460,6 +476,11 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         el.innerHTML = `
             <fieldset class="nr-groups">
                 <legend>${isAnc ? "Show" : "Degree"}</legend>
+                ${
+                    isAnc && f.groups.some((g) => nr.DIRECT_LINE_GROUPS.includes(g.key))
+                        ? `<button type="button" class="small button nr-direct" title="Show only notable ancestors and descendants, no cousins">Direct line only</button>`
+                        : ""
+                }
                 ${isAnc ? `<span class="nr-groups-hint">Shared ancestors by generation:</span>` : ""}
                 ${f.groups
                     .map(
@@ -520,6 +541,11 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                     .map((i, cb) => cb.value)
                     .get()
             );
+            this.onFiltersChanged();
+        });
+        $el.find(".nr-direct").on("click", () => {
+            this.filters.groups = new Set(f.groups.map((g) => g.key).filter((k) => nr.DIRECT_LINE_GROUPS.includes(k)));
+            this.renderFilters();
             this.onFiltersChanged();
         });
         $el.find(".nr-category").on("change", (e) => this.setFilter("category", e.target.value));
