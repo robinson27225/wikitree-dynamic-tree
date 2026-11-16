@@ -15,6 +15,12 @@ Fixes and requests from the first testers on G2G.
     (Palotay-1) and Helena Dalroth (Dalroth-3).
 -   **"Direct line only" button** in the shared ancestors search shows just the notable ancestors and descendants, with
     no cousins. Requested by A. Groesser.
+-   **Biological, Adoptive, or Both** for an adopted starting profile, as in the Genealogy Report. When the profile
+    has birth parents recorded beside the parents it lists, a "Parents followed" choice appears in the shared
+    ancestors search. Both is the default. Asked about by Patty LaPlante.
+-   **Ancestors with accented, hyphenated, or apostrophe surnames are now searched.** WikiTree+ split a WikiTree ID
+    such as "Söderblom-7", "Szent-Györgyi-4", or "O'Brien-1" and found nothing, so their notable relatives were
+    silently missed. The searches now use each profile's number instead.
 -   **Dropped connections no longer end a long search.** When the internet connection drops ("Failed to fetch"), the app
     tries again twice, and if it still fails it keeps the relatives found so far and says what happened. Reported by
     Debra Akin.

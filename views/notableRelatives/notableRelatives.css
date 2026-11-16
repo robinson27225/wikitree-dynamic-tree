@@ -73,6 +73,28 @@
 .nr-view .nr-filters.hidden {
   display: none;
 }
+.nr-view .nr-parents {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+}
+.nr-view .nr-parents.hidden {
+  display: none;
+}
+.nr-view .nr-parents-label {
+  font-weight: bold;
+}
+.nr-view .nr-parents label {
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nr-view .nr-parents-note {
+  flex-basis: 100%;
+  color: var(--nr-muted);
+  font-size: 0.9em;
+}
 .nr-view .nr-groups {
   grid-column: 1 / -1;
   display: flex;

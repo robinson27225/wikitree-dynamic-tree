@@ -104,16 +104,16 @@ test("fetchPlusNotableIds asks WikiTree+ for NotableProfile in the CC7", async (
             json: async () => ({ response: { found: 2, profiles: [722, 726] }, debug: { dataDate: "2026-11-01" } }),
         };
     };
-    const res = await fetchPlusNotableIds("Windsor-1", { fetchFn });
+    const res = await fetchPlusNotableIds(722, { fetchFn });
     assert.deepEqual(res, { ids: [722, 726], dataDate: "2026-11-01" });
-    assert.match(url, /WTWebProfileSearch\/TA-notableRelatives\.json\?Query=CC7%3DWindsor-1%20NotableProfile/);
+    assert.match(url, /WTWebProfileSearch\/TA-notableRelatives\.json\?Query=CC7%3D722%20NotableProfile/);
     assert.match(url, /appID=TA-notableRelatives/);
 
-    const none = await fetchPlusNotableIds("X-1", {
+    const none = await fetchPlusNotableIds(9, {
         fetchFn: async () => ({ ok: true, json: async () => ({ response: { found: 0 } }) }),
     });
     assert.deepEqual(none.ids, []);
-    await assert.rejects(fetchPlusNotableIds("X-1", { fetchFn: async () => ({ ok: false, status: 500 }) }), /HTTP 500/);
+    await assert.rejects(fetchPlusNotableIds(9, { fetchFn: async () => ({ ok: false, status: 500 }) }), /HTTP 500/);
 });
 
 test("fetchProfiles asks in chunks of 1000", async () => {
@@ -312,10 +312,11 @@ test("fetchConnection and applyConnection fill in a missing degree", async () =>
 });
 
 test("descendantsQueries gives each ancestor its own NotableProfile and splits long queries", () => {
-    assert.deepEqual(descendantsQueries(["A-1", "B-2"]), [
-        "Descendants=A-1 NotableProfile OR Descendants=B-2 NotableProfile",
+    // Numeric ids: WikiTree+ splits an unquoted "Söderblom-7" or "O'Brien-1" and finds nothing.
+    assert.deepEqual(descendantsQueries([21773300, 2]), [
+        "Descendants=21773300 NotableProfile OR Descendants=2 NotableProfile",
     ]);
-    const many = Array.from({ length: 200 }, (_, i) => `Surname-${1000 + i}`);
+    const many = Array.from({ length: 200 }, (_, i) => 10000000 + i);
     const queries = descendantsQueries(many, 1000);
     assert.ok(queries.length > 1);
     assert.ok(queries.every((q) => encodeURIComponent(q).length <= 1000));
@@ -362,10 +363,10 @@ test("searchAncestral finds ancestors, descendants and cousins, nearest generati
         return [{ status: "", people: apiPages[`${relation}:${data[relation]}`] || {} }];
     };
     const plusAnswers = new Map([
-        ["Ancestors=Me-1 NotableProfile", [4, 77]], // 4 is within reach, 77 further back
-        ["Descendants=Me-1 NotableProfile", [10]],
-        ["Descendants=Dad-2 NotableProfile OR Descendants=Mum-3 NotableProfile", [10, 20, 21]],
-        ["Descendants=Gran-4 NotableProfile", [2, 20, 30]],
+        ["Ancestors=1 NotableProfile", [4, 77]], // 4 is within reach, 77 further back
+        ["Descendants=1 NotableProfile", [10]],
+        ["Descendants=2 NotableProfile OR Descendants=3 NotableProfile", [10, 20, 21]],
+        ["Descendants=4 NotableProfile", [2, 20, 30]],
     ]);
     const asked = [];
     const fetchFn = async (url) => {
@@ -382,7 +383,6 @@ test("searchAncestral finds ancestors, descendants and cousins, nearest generati
     const found = [];
     const result = await searchAncestral({
         rootId: 1,
-        rootWtId: "Me-1",
         generations: 3,
         api,
         fetchFn,
@@ -407,13 +407,13 @@ test("searchAncestral retries a failed WikiTree+ query once, then counts it", as
     ];
     let failures = 0;
     const fetchFn = async (url) => {
-        if (url.includes("Dad-2")) {
+        if (url.includes("Descendants%3D2%20")) {
             failures++;
             return { ok: false, status: 500 };
         }
         return { ok: true, json: async () => ({ response: { profiles: [] } }) };
     };
-    const result = await searchAncestral({ rootId: 1, rootWtId: "Me-1", generations: 2, api, fetchFn });
+    const result = await searchAncestral({ rootId: 1, generations: 2, api, fetchFn });
     assert.equal(failures, 2);
     assert.equal(result.failedQueries, 1);
 });
@@ -565,4 +565,86 @@ test("withRetry tries again when the connection drops, but not for other errors"
 
 test("the direct line groups are the ancestor and descendant groups", () => {
     assert.deepEqual([...DIRECT_LINE_GROUPS].sort(), ["anc", "anc-far", "desc"]);
+});
+
+// ---------- 0.2.0: birth and adoptive parents ----------
+
+import { parentOptions, chosenParents, ancestorsFrom, notableAncestorsQuery } from "../notable_data.js";
+
+test("parentOptions matches the Genealogy Report: birth parents fall back to the listed ones", () => {
+    // Wright-33630: adoptive father listed, birth father recorded, mother the same.
+    const wright = parentOptions({ Father: 40387616, Mother: 21130573, BioFather: 50159746, BioMother: null });
+    assert.deepEqual(wright.main, [40387616, 21130573]);
+    assert.deepEqual(wright.bio, [50159746, 21130573]);
+    assert.equal(wright.hasAlternate, true);
+    assert.deepEqual(wright.hiddenBio, []);
+
+    assert.equal(parentOptions({ Father: 2, Mother: 3 }).hasAlternate, false);
+    assert.equal(chosenParents(parentOptions({ Father: 2, Mother: 3 }), "bio"), null, "no choice: follow everyone");
+
+    // Jobs-9: both birth parents private to the viewer (negative ids).
+    const jobs = parentOptions({ Father: 9041277, Mother: 9041286, BioFather: -1, BioMother: -2 });
+    assert.equal(jobs.hasAlternate, true);
+    assert.deepEqual(jobs.hiddenBio, ["father", "mother"]);
+    assert.deepEqual(chosenParents(jobs, "bio"), []);
+    assert.deepEqual(chosenParents(jobs, "both"), [9041277, 9041286]);
+});
+
+test("chosenParents gives the parents for Biological, Adoptive and Both", () => {
+    const o = parentOptions({ Father: 40, Mother: 21, BioFather: 50 });
+    assert.deepEqual(chosenParents(o, "bio"), [50, 21]);
+    assert.deepEqual(chosenParents(o, "main"), [40, 21]);
+    assert.deepEqual(chosenParents(o, "both"), [40, 21, 50]);
+});
+
+test("ancestorsFrom keeps only the chosen side, through listed and birth parents above it", () => {
+    const tree = new Map([
+        [40, { id: 40, degree: 1, father: 41, mother: 0, bioFather: 0, bioMother: 0 }], // adoptive father
+        [41, { id: 41, degree: 2, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+        [50, { id: 50, degree: 1, father: 0, mother: 0, bioFather: 51, bioMother: 0 }], // birth father
+        [51, { id: 51, degree: 2, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+        [21, { id: 21, degree: 1, father: 22, mother: 0, bioFather: 0, bioMother: 0 }], // mother
+        [22, { id: 22, degree: 2, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+    ]);
+    assert.deepEqual([...ancestorsFrom(tree, [50, 21]).keys()].sort(), [21, 22, 50, 51]);
+    assert.deepEqual([...ancestorsFrom(tree, [40, 21]).keys()].sort(), [21, 22, 40, 41]);
+});
+
+test("notableAncestorsQuery asks from the chosen parents, by numeric id, with each parent itself", () => {
+    assert.equal(notableAncestorsQuery(1, null, new Map()), "Ancestors=1 NotableProfile");
+    const ancestors = new Map([
+        [50, { id: 50, name: "Söderblom-7" }],
+        [21, { id: 21, name: "" }],
+    ]);
+    assert.equal(
+        notableAncestorsQuery(1, [50, 21], ancestors),
+        'Ancestors=50 NotableProfile OR WikiTreeID="Söderblom-7" NotableProfile OR Ancestors=21 NotableProfile'
+    );
+});
+
+test("searchAncestral with Biological searches only the birth parents' side", async () => {
+    // Listed father 40 (adoptive), birth father 50, mother 21. The API returns all three at generation 1.
+    const apiPages = {
+        "ancestors:1": {
+            40: person(40, 1, { Name: "Adopt-40" }),
+            50: person(50, 1, { Name: "Bio-50" }),
+            21: person(21, 1, { Name: "Mum-21" }),
+        },
+        "ancestors:2": {},
+    };
+    const api = async (data) => {
+        const relation = data.ancestors ? "ancestors" : "descendants";
+        return [{ status: "", people: apiPages[`${relation}:${data[relation]}`] || {} }];
+    };
+    const asked = [];
+    const fetchFn = async (url) => {
+        asked.push(decodeURIComponent(/Query=([^&]*)/.exec(url)[1]));
+        return { ok: true, json: async () => ({ response: { profiles: [] } }) };
+    };
+    const bio = chosenParents(parentOptions({ Father: 40, Mother: 21, BioFather: 50 }), "bio");
+    const result = await searchAncestral({ rootId: 1, generations: 2, parentIds: bio, api, fetchFn });
+    assert.deepEqual([...result.ancestors.keys()].sort(), [21, 50]);
+    assert.ok(asked[0].startsWith("Ancestors=50 NotableProfile OR "), asked[0]);
+    assert.ok(!asked.some((q) => /\b40\b/.test(q)), "the adoptive father is not searched");
+    assert.ok(asked.includes("Descendants=50 NotableProfile OR Descendants=21 NotableProfile"));
 });

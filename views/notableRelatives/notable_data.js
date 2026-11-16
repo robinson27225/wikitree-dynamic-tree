@@ -45,7 +45,7 @@ const MAX_PAGES = 40;
 const PROFILE_CHUNK = 1000;
 const MAX_QUERY_LENGTH = 3000; // characters of encoded WikiTree+ query per request
 
-const TREE_FIELDS = ["Id", "Name", "Father", "Mother", "Gender", "Meta"];
+const TREE_FIELDS = ["Id", "Name", "Father", "Mother", "BioFather", "BioMother", "Gender", "Meta"];
 export const PROFILE_FIELDS = [
     "Id",
     "Name",
@@ -94,9 +94,13 @@ export async function fetchPlusIds(query, { fetchFn = fetch, signal } = {}) {
     };
 }
 
-/** Ids of the notable profiles within 7 degrees of wtId (a WikiTree ID such as "Windsor-1"). */
-export function fetchPlusNotableIds(wtId, options = {}) {
-    return fetchPlusIds(`CC7=${wtId} NotableProfile`, options);
+/**
+ * Ids of the notable profiles within 7 degrees of a profile, by its numeric id. WikiTree+ splits an unquoted
+ * WikiTree ID at accented letters, hyphens in surnames and apostrophes ("Söderblom-7", "O'Brien-1" find nothing),
+ * so every query here uses the numeric id.
+ */
+export function fetchPlusNotableIds(id, options = {}) {
+    return fetchPlusIds(`CC7=${Number(id)} NotableProfile`, options);
 }
 
 const ALL_NOTABLES_PAGE = 100000; // WikiTree+ returns at most 100,000 ids per answer
@@ -141,12 +145,12 @@ export function resetAllNotableIds() {
  * "Descendants=A NotableProfile OR Descendants=B NotableProfile ..." in as few queries as fit the length limit.
  * WikiTree+ binds AND tighter than OR, so each ancestor needs its own NotableProfile.
  */
-export function descendantsQueries(wtIds, maxLength = MAX_QUERY_LENGTH) {
+export function descendantsQueries(ids, maxLength = MAX_QUERY_LENGTH) {
     const queries = [];
     let terms = [];
     let length = 0;
-    for (const wtId of wtIds) {
-        const term = `Descendants=${wtId} NotableProfile`;
+    for (const id of ids) {
+        const term = `Descendants=${Number(id)} NotableProfile`;
         const termLength = encodeURIComponent(` OR ${term}`).length;
         if (terms.length && length + termLength > maxLength) {
             queries.push(terms.join(" OR "));
@@ -248,6 +252,8 @@ function addTreePerson(people, p, askedDegree, isExact = false) {
         name: p.Name || "",
         father: Number(p.Father) || 0,
         mother: Number(p.Mother) || 0,
+        bioFather: Number(p.BioFather) || 0,
+        bioMother: Number(p.BioMother) || 0,
         gender: p.Gender || "",
         degree,
     });
@@ -343,6 +349,82 @@ export function applyConnection(record, conn) {
     return record;
 }
 
+// ---------- birth and adoptive parents ----------
+
+/** Which parents of the starting profile to follow: "both" (the default), "bio" or "main" (the parents it lists). */
+export const PARENT_CHOICES = ["both", "bio", "main"];
+export const DEFAULT_PARENTS = "both";
+export const PARENT_LABELS = { both: "Both", bio: "Biological", main: "Adoptive" };
+
+const signedId = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * The parents a profile can be followed through, as in the Genealogy Report. "main" are the parents the profile lists
+ * (the adoptive or legal parents when the birth parents differ, marked "non-biological"); "bio" are the birth parents
+ * (BioFather / BioMother), falling back to the listed parent when only one side differs. A birth parent the viewer
+ * may not see comes back with a negative id: that side cannot be followed, and is named in hiddenBio.
+ * @returns {{main:number[], bio:number[], hasAlternate:boolean, hiddenBio:string[]}}
+ */
+export function parentOptions(p) {
+    const main = [Math.max(0, signedId(p?.Father)), Math.max(0, signedId(p?.Mother))];
+    const hiddenBio = [];
+    const bio = [
+        ["BioFather", 0, "father"],
+        ["BioMother", 1, "mother"],
+    ].map(([field, i, side]) => {
+        const id = signedId(p?.[field]);
+        if (id > 0) return id;
+        if (id < 0) {
+            hiddenBio.push(side);
+            return 0;
+        }
+        return main[i];
+    });
+    const hasAlternate = bio[0] !== main[0] || bio[1] !== main[1];
+    return { main, bio, hasAlternate, hiddenBio };
+}
+
+/** The parent ids to search from for a choice, or null to follow every parent (no birth parents recorded). */
+export function chosenParents(options, choice) {
+    if (!options?.hasAlternate) return null;
+    const ids = choice === "main" ? options.main : choice === "bio" ? options.bio : [...options.main, ...options.bio];
+    return [...new Set(ids.filter((id) => id > 0))];
+}
+
+/**
+ * The ancestors reachable from startIds (each start included when it is in the map), through listed and birth
+ * parents alike. The API's ancestors list holds both kinds at every generation.
+ */
+export function ancestorsFrom(ancestors, startIds) {
+    const kept = new Map();
+    const queue = [...startIds];
+    while (queue.length) {
+        const id = queue.shift();
+        if (kept.has(id) || !ancestors.has(id)) continue;
+        const a = ancestors.get(id);
+        kept.set(id, a);
+        for (const parent of [a.father, a.mother, a.bioFather, a.bioMother]) {
+            if (parent > 0 && !kept.has(parent)) queue.push(parent);
+        }
+    }
+    return kept;
+}
+
+/** The WikiTree+ query for the notable ancestors: of the starting profile, or of the chosen parents and the parents themselves. */
+export function notableAncestorsQuery(rootId, parentIds, ancestors) {
+    if (!parentIds) return `Ancestors=${Number(rootId)} NotableProfile`;
+    const terms = [];
+    for (const id of parentIds) {
+        terms.push(`Ancestors=${Number(id)} NotableProfile`);
+        const name = ancestors.get(id)?.name;
+        if (name) terms.push(`WikiTreeID="${name.replace(/"/g, "")}" NotableProfile`);
+    }
+    return terms.join(" OR ");
+}
+
 // ---------- the shared-ancestors search ----------
 
 /**
@@ -351,16 +433,17 @@ export function applyConnection(record, conn) {
  *
  * @param {object} o
  * @param {number} o.rootId
- * @param {string} o.rootWtId
  * @param {number} o.generations how many generations of ancestors to search through
+ * @param {number[]|null} [o.parentIds] the starting profile's parents to search through (from chosenParents), or
+ *        null for all of them
  * @param {(found: {kind:"ancestor"|"ancestor-far"|"descendant"|"cousin", ids:number[], generation?:number,
  *        ancestors:Map, descendants:Map, generations:number}) => any} o.onFound   pass it to buildAncestralRecords
  * @param {(status: {stage:string, generation?:number, count?:number, query?:number, queries?:number}) => void} o.onStatus
  */
 export async function searchAncestral({
     rootId,
-    rootWtId,
     generations,
+    parentIds = null,
     api,
     fetchFn = fetch,
     signal,
@@ -368,11 +451,12 @@ export async function searchAncestral({
     onFound = () => {},
 }) {
     const gens = Math.max(1, Math.min(MAX_GENERATIONS, Number(generations) || DEFAULT_GENERATIONS));
-    const { people: ancestors, isPartial } = await fetchByGeneration(rootId, "ancestors", gens, {
+    const { people: allAncestors, isPartial } = await fetchByGeneration(rootId, "ancestors", gens, {
         api,
         signal,
         onProgress: (count, generation) => onStatus({ stage: "ancestors", count, generation }),
     });
+    const ancestors = parentIds ? ancestorsFrom(allAncestors, parentIds) : allAncestors;
     const seen = new Set([Number(rootId), ...ancestors.keys()]);
     let descendants = new Map();
     const report = (found) => onFound({ ...found, ancestors, descendants, generations: gens });
@@ -386,16 +470,17 @@ export async function searchAncestral({
 
     // Notable ancestors: WikiTree+ looks back through every generation.
     onStatus({ stage: "notable-ancestors" });
-    const ancestorIds = await plus(`Ancestors=${rootWtId} NotableProfile`);
+    const ancestorIds = await plus(notableAncestorsQuery(rootId, parentIds, ancestors));
     const near = ancestorIds.filter((id) => ancestors.has(id));
-    const far = ancestorIds.filter((id) => !ancestors.has(id) && id !== Number(rootId));
+    // Further back than the walk went. With a parent choice, one only on the other side's walk is left out.
+    const far = ancestorIds.filter((id) => !allAncestors.has(id) && id !== Number(rootId));
     far.forEach((id) => seen.add(id));
     if (near.length) await report({ kind: "ancestor", ids: near });
     if (far.length) await report({ kind: "ancestor-far", ids: far });
 
     // Notable descendants, with their generation from the API.
     onStatus({ stage: "notable-descendants" });
-    const descendantIds = (await plus(`Descendants=${rootWtId} NotableProfile`)).filter((id) => !seen.has(id));
+    const descendantIds = (await plus(`Descendants=${Number(rootId)} NotableProfile`)).filter((id) => !seen.has(id));
     if (descendantIds.length) {
         descendants = (await fetchByGeneration(rootId, "descendants", MAX_DESCENDANT_GENERATIONS, { api, signal }))
             .people;
@@ -405,8 +490,10 @@ export async function searchAncestral({
 
     // Cousins: the notable descendants of each generation of ancestors, nearest first.
     for (let generation = 1; generation <= gens; generation++) {
-        const wtIds = [...ancestors.values()].filter((a) => a.degree === generation && a.name).map((a) => a.name);
-        const queries = descendantsQueries(wtIds);
+        const generationIds = [...ancestors.values()]
+            .filter((a) => a.degree === generation && a.id > 0)
+            .map((a) => a.id);
+        const queries = descendantsQueries(generationIds);
         const found = [];
         for (let q = 0; q < queries.length; q++) {
             onStatus({ stage: "cousins", generation, query: q + 1, queries: queries.length });
