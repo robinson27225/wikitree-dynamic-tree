@@ -199,9 +199,13 @@ export function sharedAncestorsLabel(generation) {
     return `${greats(generation - 2)}grandparents`;
 }
 
-/** Who someone sharing those ancestors usually is. */
+/**
+ * Who someone sharing those ancestors can be. A cousin of your own generation or younger is a (generation - 1)th
+ * cousin, removed or not; an older one is a closer cousin, removed (shared 3rd great-grandparents can make a
+ * 2nd cousin twice removed). So the note gives the furthest cousin, not every cousin.
+ */
 export function cousinRangeLabel(generation) {
     if (generation === 1) return "siblings and their descendants";
     if (generation === 2) return "aunts, uncles, 1st cousins and their descendants";
-    return `${ordinal(generation - 1)} cousins (some removed) and their families`;
+    return `up to ${ordinal(generation - 1)} cousins, some removed`;
 }

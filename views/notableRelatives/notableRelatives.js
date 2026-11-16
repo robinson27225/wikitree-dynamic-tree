@@ -12,6 +12,9 @@
  * "WikiTree Days Saturday Question: If you could invent one new WikiTree tool, what would it do?"
  * https://www.wikitree.com/g2g/2105562/wikitree-days-saturday-question-could-invent-wikitree-would?show=2105577#a2105577
  * Inspired by Relative Finder, which finds famous relatives on FamilySearch.
+ *
+ * Help page: https://www.wikitree.com/wiki/Space:Notable_Relatives. Version and history: VERSION in notable_data.js and
+ * CHANGELOG.md.
  */
 
 import * as nr from "./notable_data.js";
@@ -45,7 +48,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 "Notable people related to this profile: notable ancestors, descendants and cousins through shared " +
                 "ancestors up to 15 generations back, or everyone within 7 degrees. Filter by category and " +
                 "location. Idea by Blake Ashton (Ashton-4458) on G2G.",
-            docs: IDEA_URL,
+            docs: nr.HELP_URL,
             params: FILTER_PARAMS,
         };
     }
@@ -59,7 +62,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         this.shown = new Map();
 
         this.container.innerHTML = `
-            <div class="nr-view">
+            <div class="nr-view" data-version="${nr.VERSION}">
                 <div class="nr-header">
                     <div class="nr-brand">
                         <img class="nr-logo" src="views/notableRelatives/images/notable-relatives-logo.svg" alt="" width="48" height="48" />
@@ -95,6 +98,13 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                     Use <em>Apps Login</em> to follow links through private profiles.<br />
                     Idea by <a href="${IDEA_PROFILE}" target="_blank">Blake Ashton (Ashton-4458)</a>
                     on <a href="${IDEA_URL}" target="_blank">G2G</a>, inspired by Relative Finder.
+                    <p class="nr-credit">
+                        <span class="nr-version">Notable Relatives v${nr.VERSION}</span> ·
+                        Created by <a href="${nr.AUTHOR_URL}" target="_blank" rel="noopener"
+                            title="The author's WikiTree profile">${nr.AUTHOR_ID}</a> ·
+                        <a href="${nr.HELP_URL}" target="_blank" rel="noopener"
+                            title="About and how to use Notable Relatives, on WikiTree">Help</a>
+                    </p>
                 </footer>
             </div>`;
 

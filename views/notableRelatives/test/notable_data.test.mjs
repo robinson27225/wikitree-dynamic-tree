@@ -451,7 +451,7 @@ test("buildAncestralRecords labels each kind", () => {
         [
             "g9",
             "Shared 7th great-grandparents",
-            "8th cousins (some removed) and their families",
+            "up to 8th cousins, some removed",
             "shares the starting profile's 7th great-grandparents",
             ["Ireland"],
         ]

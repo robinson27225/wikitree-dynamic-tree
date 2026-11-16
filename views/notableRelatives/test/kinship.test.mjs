@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parentGraph, relationshipNamer, describeRelationship, relationshipFromSteps } from "../kinship.js";
+import {
+    parentGraph,
+    relationshipNamer,
+    describeRelationship,
+    relationshipFromSteps,
+    cousinRangeLabel,
+} from "../kinship.js";
 
 // 1 & 2 are a couple with children 3 (male) and 4 (female). 5 is 3's son, 6 is 4's son.
 // 7 (the starting profile) is 5's son; 8 is 6's son; 9 is 8's daughter.
@@ -88,4 +94,12 @@ test("relationshipFromSteps reads a connection path", () => {
     assert.equal(label(["spouse"], "Female"), "wife");
     assert.equal(label(["child", "spouse", "parent"]), "related by marriage");
     assert.equal(relationshipFromSteps(["parent", "spouse"], "").isBlood, false);
+});
+
+test("cousinRangeLabel names the furthest cousin a shared generation can give", () => {
+    assert.equal(cousinRangeLabel(1), "siblings and their descendants");
+    assert.equal(cousinRangeLabel(2), "aunts, uncles, 1st cousins and their descendants");
+    assert.equal(cousinRangeLabel(5), "up to 4th cousins, some removed");
+    // Shared 3rd great-grandparents (generation 5) seen from a cousin 3 generations below them:
+    assert.equal(describeRelationship(5, 3, false, "Male"), "2nd cousin twice removed");
 });

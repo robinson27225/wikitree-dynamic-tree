@@ -25,6 +25,13 @@ import {
     cousinRangeLabel,
 } from "./kinship.js";
 
+// Semantic version (major.minor.patch), 0.x while the app is in beta. Raise it with every upload and add an entry to
+// CHANGELOG.md; a test checks the two agree. A fix raises the last number, a new feature the middle one.
+export const VERSION = "0.1.0";
+export const AUTHOR_ID = "Robinson-27225";
+export const AUTHOR_URL = `https://www.wikitree.com/wiki/${AUTHOR_ID}`;
+export const HELP_URL = "https://www.wikitree.com/wiki/Space:Notable_Relatives";
+
 export const APP_ID = "notableRelatives"; // WikiTreeAPI.postToAPI prepends "TA-"
 export const PLUS_APP_ID = "TA-notableRelatives";
 export const MAX_DEGREE = 7;
