@@ -418,7 +418,12 @@ window.LoginManager = class LoginManager {
             // An appId is needed: the API answers requests without one with "Limit exceeded." (HTTP 429).
             this.wtAPI
                 .postToAPI({ appId: "LoginManager", action: "clientLogin", authcode: authcode })
-                .then((data) => this.onAuth(data));
+                .then((data) => this.onAuth(data))
+                .catch((err) => {
+                    // Show the Apps Login button again instead of leaving the page silently logged out.
+                    console.error("Apps Login failed:", err);
+                    this.events?.onUnlogged({ loginFailed: true });
+                });
         } else {
             this.events?.onUnlogged();
         }

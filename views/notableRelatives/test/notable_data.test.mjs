@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+    plusSettings,
     fetchCc7,
     fetchPlusNotableIds,
     fetchProfiles,
@@ -33,6 +34,8 @@ function fakeApi(pages) {
     };
     return { api, calls };
 }
+
+plusSettings.pauseMs = 0; // no pause between WikiTree+ requests in tests
 
 const person = (Id, Degrees, extra = {}) => ({
     Id,
@@ -401,21 +404,29 @@ test("searchAncestral finds ancestors, descendants and cousins, nearest generati
     assert.equal(asked.length, 4, "generation 3 has no ancestors, so nothing is asked");
 });
 
-test("searchAncestral retries a failed WikiTree+ query once, then counts it", async () => {
+test("searchAncestral never retries a failed WikiTree+ search, and stops searching after it", async () => {
     const api = async (data) => [
-        { status: "", people: data.ancestors === 1 ? { 2: person(2, 1, { Name: "Dad-2" }) } : {} },
+        {
+            status: "",
+            people:
+                data.ancestors === 1
+                    ? { 2: person(2, 1, { Name: "Dad-2" }) }
+                    : data.ancestors === 2
+                      ? { 4: person(4, 2) }
+                      : {},
+        },
     ];
-    let failures = 0;
+    const asked = [];
     const fetchFn = async (url) => {
-        if (url.includes("Descendants%3D2%20")) {
-            failures++;
-            return { ok: false, status: 500 };
-        }
+        asked.push(url);
+        if (url.includes("Descendants%3D2%20")) return { ok: false, status: 500 };
         return { ok: true, json: async () => ({ response: { profiles: [] } }) };
     };
-    const result = await searchAncestral({ rootId: 1, generations: 2, api, fetchFn });
-    assert.equal(failures, 2);
+    const result = await searchAncestral({ rootId: 1, generations: 3, api, fetchFn });
+    assert.equal(asked.filter((u) => u.includes("Descendants%3D2%20")).length, 1, "asked once, not retried");
+    assert.ok(!asked.some((u) => u.includes("Descendants%3D4%20")), "generation 2 is not searched after the failure");
     assert.equal(result.failedQueries, 1);
+    assert.equal(result.stoppedAt, 1);
 });
 
 test("buildAncestralRecords labels each kind", () => {
@@ -647,4 +658,196 @@ test("searchAncestral with Biological searches only the birth parents' side", as
     assert.ok(asked[0].startsWith("Ancestors=50 NotableProfile OR "), asked[0]);
     assert.ok(!asked.some((q) => /\b40\b/.test(q)), "the adoptive father is not searched");
     assert.ok(asked.includes("Descendants=50 NotableProfile OR Descendants=21 NotableProfile"));
+});
+
+// ---------- private starting profiles ----------
+
+import { PrivateProfileError, privateProfileMessage } from "../notable_data.js";
+
+test("a private starting profile stops the walk with PrivateProfileError", async () => {
+    // What WikiTree answers for Goodine-41 when the viewer may not see it.
+    const api = async () => [
+        {
+            status: "",
+            resultByKey: { 18749863: { Id: 18749863, status: "Ancestor/Descendant permission denied." } },
+            people: { "-1": { Id: -1, Meta: { Degrees: 0 } } },
+        },
+    ];
+    await assert.rejects(fetchByGeneration(18749863, "ancestors", 3, { api }), (err) => {
+        assert.ok(err instanceof PrivateProfileError);
+        assert.match(err.message, /permission denied/);
+        return true;
+    });
+});
+
+test("privateProfileMessage points to Apps Login or the Trusted List, like the other Tree Apps", () => {
+    const out = privateProfileMessage("Goodine-41", { isLoggedIn: false });
+    assert.match(out, /could not be retrieved for Goodine-41/);
+    assert.match(out, /Apps Login/);
+    const inn = privateProfileMessage("Goodine-41", { isLoggedIn: true, name: "Robinson-27225" });
+    assert.match(inn, /logged in to the Tree Apps as Robinson-27225/);
+    assert.match(inn, /Trusted List/);
+});
+
+// ---------- review fixes and WikiTree+ etiquette ----------
+
+import { plusQueue, resetPlusQueue, PlusUnavailableError, untilAborted, isServerError } from "../notable_data.js";
+
+const json = (body) => ({ ok: true, status: 200, json: async () => body });
+
+test("WikiTree+ requests run one at a time, never in parallel", async () => {
+    resetPlusQueue();
+    let running = 0;
+    let most = 0;
+    const fetchFn = async () => {
+        running++;
+        most = Math.max(most, running);
+        await new Promise((r) => setTimeout(r, 5));
+        running--;
+        return json({ response: { profiles: [1] } });
+    };
+    await Promise.all(Array.from({ length: 13 }, (_, i) => fetchPlusNotableIds(i + 1, { fetchFn })));
+    assert.equal(most, 1);
+});
+
+test("a stopped search drops its waiting WikiTree+ requests but lets a started one finish", async () => {
+    resetPlusQueue();
+    const started = [];
+    let finish;
+    const slow = new Promise((r) => (finish = r));
+    const fetchFn = async (url) => {
+        started.push(url);
+        if (started.length === 1) await slow;
+        return json({ response: { profiles: [] } });
+    };
+    const controller = new AbortController();
+    const first = fetchPlusNotableIds(1, { fetchFn, signal: controller.signal });
+    const second = fetchPlusNotableIds(2, { fetchFn, signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+    await assert.rejects(first, { name: "AbortError" });
+    await assert.rejects(second, { name: "AbortError" });
+    // A new search waits for the started request instead of running beside it.
+    const third = fetchPlusNotableIds(3, { fetchFn });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(started.length, 1, "nothing new starts while the first request is still on the server");
+    finish();
+    await third;
+    assert.equal(started.length, 2, "the waiting request of the stopped search was dropped");
+});
+
+test("a WikiTree+ refusal stops all requests from the page for a while", async () => {
+    resetPlusQueue();
+    let calls = 0;
+    const refuse = async () => {
+        calls++;
+        return { ok: false, status: 429 };
+    };
+    await assert.rejects(fetchPlusNotableIds(1, { fetchFn: refuse }), PlusUnavailableError);
+    await assert.rejects(fetchPlusNotableIds(2, { fetchFn: refuse }), PlusUnavailableError);
+    assert.equal(calls, 1, "the second request is not sent");
+    resetPlusQueue();
+});
+
+test("a WikiTree+ error answer is an error, not an empty result", async () => {
+    resetPlusQueue();
+    const fetchFn = async () => json({ response: { error: "Query too long" } });
+    await assert.rejects(fetchPlusNotableIds(1, { fetchFn }), /Query too long/);
+});
+
+test("untilAborted rejects on abort without waiting for the work", async () => {
+    const controller = new AbortController();
+    const never = new Promise(() => {});
+    const p = untilAborted(never, controller.signal);
+    controller.abort();
+    await assert.rejects(p, { name: "AbortError" });
+});
+
+test("descendantsQueries puts at most 20 ancestors in one WikiTree+ request", () => {
+    const ids = Array.from({ length: 45 }, (_, i) => i + 1);
+    const queries = descendantsQueries(ids);
+    assert.deepEqual(
+        queries.map((q) => q.split(" OR ").length),
+        [20, 20, 5]
+    );
+});
+
+test("private placeholders are left out but do not end the walk", async () => {
+    // Generation 1: two private parents (-1, -2). Generation 2: two private grandparents, also -1 and -2 in their
+    // own answer. Generation 3: a public great-grandparent.
+    const pages = {
+        1: { "-1": { Id: -1, Meta: { Degrees: 1 } }, "-2": { Id: -2, Meta: { Degrees: 1 } } },
+        2: { "-1": { Id: -1, Meta: { Degrees: 2 } }, "-2": { Id: -2, Meta: { Degrees: 2 } } },
+        3: { 8: person(8, 3) },
+        4: {},
+    };
+    const api = async (data) => [{ status: "", people: pages[data.ancestors] }];
+    const { people } = await fetchByGeneration(1, "ancestors", 5, { api });
+    assert.deepEqual([...people.keys()], [8]);
+    assert.equal(people.get(8).degree, 3);
+});
+
+test("a walk that fails part way keeps the people found so far", async () => {
+    const api = async (data) => {
+        if (data.ancestors === 2) throw new Error("WikiTree could not list the relatives: Limit exceeded.");
+        return [{ status: "", people: { 2: person(2, 1) } }];
+    };
+    const result = await fetchByGeneration(1, "ancestors", 4, { api });
+    assert.equal(result.isPartial, true);
+    assert.match(result.error.message, /Limit exceeded/);
+    assert.deepEqual([...result.people.keys()], [2]);
+
+    const failsAtOnce = async () => {
+        throw new Error("Limit exceeded.");
+    };
+    await assert.rejects(fetchByGeneration(1, "ancestors", 4, { api: failsAtOnce }), /Limit exceeded/);
+});
+
+test("the descendants walk stops once the notable descendants are found", async () => {
+    const asked = [];
+    const api = async (data) => {
+        asked.push(data.descendants);
+        return [{ status: "", people: data.descendants === 1 ? { 10: person(10, 1) } : { 20: person(20, 2) } }];
+    };
+    const { people } = await fetchByGeneration(1, "descendants", 10, { api, stopWhenFound: new Set([10]) });
+    assert.deepEqual(asked, [1]);
+    assert.ok(people.has(10));
+});
+
+test("ancestorsFrom counts generations on the chosen side", () => {
+    // 60 is a grandparent through the adoptive father (API degree 2) and a great-grandparent through the birth father.
+    const tree = new Map([
+        [40, { id: 40, degree: 1, father: 60, mother: 0, bioFather: 0, bioMother: 0 }],
+        [50, { id: 50, degree: 1, father: 55, mother: 0, bioFather: 0, bioMother: 0 }],
+        [55, { id: 55, degree: 2, father: 60, mother: 0, bioFather: 0, bioMother: 0 }],
+        [60, { id: 60, degree: 2, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+    ]);
+    const bio = ancestorsFrom(tree, [50]);
+    assert.equal(bio.get(60).degree, 3);
+    assert.equal(tree.get(60).degree, 2, "the full walk is not changed");
+});
+
+test("server errors from the WikiTree API are recognised and retried", async () => {
+    assert.ok(isServerError(new Error("HTTP error! Status: 502: Bad Gateway")));
+    assert.ok(!isServerError(new Error("HTTP error! Status: 429: Too Many Requests")));
+    let calls = 0;
+    const flaky = async () => {
+        calls++;
+        if (calls === 1) throw new Error("HTTP error! Status: 503: Service Unavailable");
+        return "ok";
+    };
+    assert.equal(await withRetry(flaky, { delays: [1] }), "ok");
+});
+
+test("WikiTree+ dropping the query counts as a refusal", async () => {
+    resetPlusQueue();
+    let calls = 0;
+    const fetchFn = async () => {
+        calls++;
+        return json({ request: { query: "" }, response: { error: "No search text." } });
+    };
+    await assert.rejects(fetchPlusNotableIds(1, { fetchFn }), PlusUnavailableError);
+    await assert.rejects(fetchPlusNotableIds(2, { fetchFn }), PlusUnavailableError);
+    assert.equal(calls, 1);
+    resetPlusQueue();
 });

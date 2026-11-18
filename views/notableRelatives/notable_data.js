@@ -37,13 +37,14 @@ export const HELP_URL = "https://www.wikitree.com/wiki/Space:Notable_Relatives";
 export const APP_ID = "notableRelatives"; // WikiTreeAPI.postToAPI prepends "TA-"
 export const PLUS_APP_ID = "TA-notableRelatives";
 export const MAX_DEGREE = 7;
-export const DEFAULT_GENERATIONS = 12;
+export const DEFAULT_GENERATIONS = 8; // each generation further back makes WikiTree+'s Descendants searches much heavier
 export const MAX_GENERATIONS = 15;
 const MAX_DESCENDANT_GENERATIONS = 10; // the API's limit
 export const PAGE_LIMIT = 1025;
 const MAX_PAGES = 40;
 const PROFILE_CHUNK = 1000;
 const MAX_QUERY_LENGTH = 3000; // characters of encoded WikiTree+ query per request
+const MAX_DESCENDANTS_TERMS = 20; // ancestors per WikiTree+ Descendants request: each one can mean millions of profiles
 
 const TREE_FIELDS = ["Id", "Name", "Father", "Mother", "BioFather", "BioMother", "Gender", "Meta"];
 export const PROFILE_FIELDS = [
@@ -83,11 +84,130 @@ export function plusSearchUrl(query, appId = PLUS_APP_ID, page = null) {
     );
 }
 
+/*
+ * Being a good guest on WikiTree+. It runs on one volunteer-maintained server, and a Descendants search for an ancestor
+ * many generations back can take it several seconds. So, for the whole page:
+ *   - one WikiTree+ request at a time, with a pause after each;
+ *   - a request that has started is never cancelled: WikiTree+ would keep working on it, so a new search waits for
+ *     it to finish instead of piling another request on top. A stopped search drops only its requests still waiting;
+ *   - no automatic retries (a request that timed out may still be running on the server);
+ *   - a refusal (HTTP 429 or 403, or an error answer) stops all WikiTree+ requests from the page for a while.
+ */
+export const plusSettings = { pauseMs: 1000, coolOffMs: 15 * 60 * 1000 };
+let plusChain = Promise.resolve();
+let plusRefusedUntil = 0;
+const REFUSED_KEY = "notableRelatives:plusRefusedUntil"; // kept across reloads, so a reload does not ask again
+
+/** Until when WikiTree+ should not be asked, after a refusal from this page or an earlier visit. */
+function refusedUntil() {
+    let saved = 0;
+    try {
+        saved = Number(browserStorage()?.getItem(REFUSED_KEY)) || 0;
+    } catch {
+        // blocked storage: this page's own record is enough
+    }
+    return Math.max(plusRefusedUntil, saved);
+}
+
+function markRefused() {
+    plusRefusedUntil = Date.now() + plusSettings.coolOffMs;
+    try {
+        browserStorage()?.setItem(REFUSED_KEY, String(plusRefusedUntil));
+    } catch {
+        // blocked storage
+    }
+}
+
+/** WikiTree+ refused a request or is cooling off after a refusal. */
+export class PlusUnavailableError extends Error {
+    constructor(detail = "") {
+        super(`WikiTree+ is not answering Notable Relatives right now${detail ? ` (${detail})` : ""}.`);
+        this.name = "PlusUnavailableError";
+    }
+}
+
+export const PLUS_UNAVAILABLE_MESSAGE =
+    "WikiTree+ is not answering Notable Relatives right now, so the search stopped. Please try again later.";
+
+const abortError = () => Object.assign(new Error("The search was stopped."), { name: "AbortError" });
+
+/** Rejects as soon as signal aborts, without cancelling the work behind promise. */
+export function untilAborted(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(abortError());
+        signal.addEventListener("abort", onAbort, { once: true });
+        promise.then(
+            (value) => {
+                signal.removeEventListener("abort", onAbort);
+                resolve(value);
+            },
+            (err) => {
+                signal.removeEventListener("abort", onAbort);
+                reject(err);
+            }
+        );
+    });
+}
+
+/**
+ * Queues task behind every other WikiTree+ request from this page. Skipped (AbortError) if signal aborts while it
+ * waits; once started it runs to the end.
+ */
+export function plusQueue(task, { signal } = {}) {
+    const run = plusChain.then(async () => {
+        if (signal?.aborted) throw abortError();
+        if (Date.now() < refusedUntil()) throw new PlusUnavailableError("cooling off");
+        try {
+            return await task();
+        } finally {
+            if (plusSettings.pauseMs) await new Promise((r) => setTimeout(r, plusSettings.pauseMs));
+        }
+    });
+    plusChain = run.catch(() => {});
+    return untilAborted(run, signal);
+}
+
+/** Forgets the queue and any refusal (for tests). */
+export function resetPlusQueue() {
+    plusChain = Promise.resolve();
+    plusRefusedUntil = 0;
+    try {
+        browserStorage()?.removeItem(REFUSED_KEY);
+    } catch {
+        // blocked storage
+    }
+}
+
+/** One WikiTree+ request through the queue, as JSON. Throws PlusUnavailableError on a refusal. */
+async function plusJson(url, { fetchFn = fetch, signal } = {}) {
+    return plusQueue(
+        async () => {
+            const res = await fetchFn(url); // no signal: see above
+            if (res.status === 429 || res.status === 403) {
+                markRefused();
+                throw new PlusUnavailableError(`HTTP ${res.status}`);
+            }
+            if (!res.ok)
+                throw new Error(`The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`);
+            const json = await res.json();
+            const error = json?.response?.error;
+            // An empty query in the answer means WikiTree+ dropped what was sent: it is refusing this app's searches.
+            if (error && json?.request && !json.request.query) {
+                markRefused();
+                throw new PlusUnavailableError("search refused");
+            }
+            if (error) throw new Error(`WikiTree+ could not run the search: ${error}`);
+            return json;
+        },
+        { signal }
+    );
+}
+
 /** Profile ids matching a WikiTree+ query. @returns {Promise<{ids:number[], dataDate:string}>} */
-export async function fetchPlusIds(query, { fetchFn = fetch, signal } = {}) {
-    const res = await withRetry(() => fetchFn(plusSearchUrl(query), { signal }), { signal });
-    if (!res.ok) throw new Error(`The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`);
-    const json = await res.json();
+export async function fetchPlusIds(query, options = {}) {
+    const json = await plusJson(plusSearchUrl(query), options);
     return {
         ids: (json?.response?.profiles || []).map(Number).filter(Boolean),
         dataDate: json?.debug?.dataDate || "",
@@ -104,7 +224,36 @@ export function fetchPlusNotableIds(id, options = {}) {
 }
 
 const ALL_NOTABLES_PAGE = 100000; // WikiTree+ returns at most 100,000 ids per answer
+const ALL_NOTABLES_KEY = "notableRelatives:allNotables:v1";
+const ALL_NOTABLES_MAX_AGE = 24 * 60 * 60 * 1000; // WikiTree+ data changes weekly
 let allNotablesPromise = null;
+
+/** The browser's localStorage, or null where it is missing or blocked (private windows, node). */
+export function browserStorage() {
+    try {
+        return typeof localStorage === "undefined" ? null : localStorage;
+    } catch {
+        return null;
+    }
+}
+
+function readSavedNotables(now = Date.now()) {
+    try {
+        const saved = JSON.parse(browserStorage()?.getItem(ALL_NOTABLES_KEY) || "null");
+        if (!saved || now - saved.savedAt > ALL_NOTABLES_MAX_AGE || !Array.isArray(saved.ids)) return null;
+        return { ids: new Set(saved.ids), dataDate: saved.dataDate || "" };
+    } catch {
+        return null;
+    }
+}
+
+function saveNotables({ ids, dataDate }) {
+    try {
+        browserStorage()?.setItem(ALL_NOTABLES_KEY, JSON.stringify({ savedAt: Date.now(), dataDate, ids: [...ids] }));
+    } catch {
+        // full or blocked: the list is simply downloaded again next time
+    }
+}
 
 /**
  * The ids of every notable profile on WikiTree (about 111,000, under 1 MB), asked once per page load.
@@ -112,28 +261,28 @@ let allNotablesPromise = null;
  */
 export function fetchAllNotableIds({ fetchFn = fetch, signal } = {}) {
     if (!allNotablesPromise) {
+        // Shared by every search on the page, so it is not tied to one search's signal: a stopped search must not
+        // leave the next one waiting on a cancelled download.
         allNotablesPromise = (async () => {
+            const saved = readSavedNotables();
+            if (saved) return saved;
             const ids = new Set();
             let dataDate = "";
             for (let index = 0; index < 10; index++) {
                 const url = plusSearchUrl("NotableProfile", PLUS_APP_ID, { size: ALL_NOTABLES_PAGE, index });
-                const res = await withRetry(() => fetchFn(url, { signal }), { signal });
-                if (!res.ok)
-                    throw new Error(
-                        `The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`
-                    );
-                const json = await res.json();
+                const json = await plusJson(url, { fetchFn });
                 const page = (json?.response?.profiles || []).map(Number).filter(Boolean);
                 page.forEach((id) => ids.add(id));
                 dataDate = dataDate || json?.debug?.dataDate || "";
                 const found = Number(json?.response?.found) || 0;
                 if (page.length < ALL_NOTABLES_PAGE || ids.size >= found) break;
             }
+            saveNotables({ ids, dataDate });
             return { ids, dataDate };
         })();
         allNotablesPromise.catch(() => (allNotablesPromise = null)); // a failed download is tried again next time
     }
-    return allNotablesPromise;
+    return untilAborted(allNotablesPromise, signal);
 }
 
 /** Forgets the downloaded list of notables (for tests). */
@@ -145,14 +294,14 @@ export function resetAllNotableIds() {
  * "Descendants=A NotableProfile OR Descendants=B NotableProfile ..." in as few queries as fit the length limit.
  * WikiTree+ binds AND tighter than OR, so each ancestor needs its own NotableProfile.
  */
-export function descendantsQueries(ids, maxLength = MAX_QUERY_LENGTH) {
+export function descendantsQueries(ids, maxLength = MAX_QUERY_LENGTH, maxTerms = MAX_DESCENDANTS_TERMS) {
     const queries = [];
     let terms = [];
     let length = 0;
     for (const id of ids) {
         const term = `Descendants=${Number(id)} NotableProfile`;
         const termLength = encodeURIComponent(` OR ${term}`).length;
-        if (terms.length && length + termLength > maxLength) {
+        if (terms.length && (length + termLength > maxLength || terms.length >= maxTerms)) {
             queries.push(terms.join(" OR "));
             terms = [];
             length = 0;
@@ -171,59 +320,79 @@ export function descendantsQueries(ids, maxLength = MAX_QUERY_LENGTH) {
  * asked one generation at a time (relation=g, minGeneration=g): getPeople keeps no fixed order between the pages
  * of one big request, so paging through all generations at once skips people. Within a generation WikiTree returns
  * at most PAGE_LIMIT people per call and says "Maximum number of profiles" when more follow.
- * The starting profile is not included.
- * @returns {Promise<{people: Map<number, object>, isPartial: boolean}>}
+ * The starting profile is not included, and nor are private relatives the viewer may not see: WikiTree returns those
+ * as placeholders whose negative ids repeat from one answer to the next, with no usable parent links.
+ * If WikiTree stops answering part way (rate limit, lost connection, server error), the people found so far are
+ * returned with isPartial; only a refusal for the starting profile itself, or a failure before anyone was found,
+ * is thrown. With stopWhenFound, the walk ends as soon as all those ids have been found.
+ * @returns {Promise<{people: Map<number, object>, isPartial: boolean, error?: Error}>}
  */
 export async function fetchByGeneration(
     rootId,
     relation,
     maxGeneration,
-    { api, signal, onProgress = () => {}, people = new Map() } = {}
+    { api, signal, onProgress = () => {}, people = new Map(), stopWhenFound = null } = {}
 ) {
     let isPartial = false;
-    for (let generation = 1; generation <= maxGeneration; generation++) {
+    const seeded = people.size; // fetchCc7 passes the starting profile in
+    const hasFound = () => people.size > seeded;
+    const allFound = () => stopWhenFound && [...stopWhenFound].every((id) => people.has(Number(id)));
+    for (let generation = 1; generation <= maxGeneration && !allFound(); generation++) {
         let start = 0;
         let foundHere = 0;
         for (let page = 0; page < MAX_PAGES; page++) {
-            const result = await withRetry(
-                () =>
-                    api(
-                        {
-                            appId: APP_ID,
-                            action: "getPeople",
-                            keys: String(rootId),
-                            [relation]: generation,
-                            minGeneration: generation,
-                            fields: TREE_FIELDS.join(","),
-                            start,
-                            limit: PAGE_LIMIT,
-                        },
-                        signal
-                    ),
-                { signal }
-            );
-            const status = String(result?.[0]?.status || "");
-            const got = Object.values(result?.[0]?.people || {});
-            const before = people.size;
-            for (const p of got) {
-                if (Number(p?.Id) !== Number(rootId)) addTreePerson(people, p, generation);
+            let result;
+            try {
+                result = await askGeneration(api, signal, rootId, relation, generation, start);
+            } catch (err) {
+                if (err?.name === "AbortError" || !hasFound()) throw err;
+                return { people, isPartial: true, error: err };
             }
-            foundHere += people.size - before;
+            const status = String(result?.[0]?.status || "");
+            const keyStatus = String(result?.[0]?.resultByKey?.[String(rootId)]?.status || "");
+            if (/permission denied/i.test(keyStatus)) throw new PrivateProfileError(keyStatus);
+            const got = Object.values(result?.[0]?.people || {}).filter((p) => Number(p?.Id) !== Number(rootId));
+            const before = people.size;
+            for (const p of got) addTreePerson(people, p, generation);
+            foundHere += got.length; // placeholders count: the family goes on past them
+            // A page of known, public people only would be a repeat: stop rather than page on forever.
+            const isRepeat = people.size === before && got.every((p) => Number(p?.Id) > 0);
             onProgress(people.size, generation);
 
             const hasMore = status.startsWith("Maximum number of profiles");
             if (status && !hasMore) {
-                if (!got.length) throw new Error(`WikiTree could not list the relatives: ${status}`);
+                if (!got.length && !hasFound()) throw new Error(`WikiTree could not list the relatives: ${status}`);
                 isPartial = true;
                 break;
             }
-            if (!hasMore || people.size === before) break;
+            if (!hasMore || !got.length || isRepeat) break;
             start += PAGE_LIMIT;
             if (page === MAX_PAGES - 1) isPartial = true;
         }
         if (!foundHere) break; // the family reaches no further
     }
     return { people, isPartial };
+}
+
+/** One page of one generation from getPeople. */
+function askGeneration(api, signal, rootId, relation, generation, start) {
+    return withRetry(
+        () =>
+            api(
+                {
+                    appId: APP_ID,
+                    action: "getPeople",
+                    keys: String(rootId),
+                    [relation]: generation,
+                    minGeneration: generation,
+                    fields: TREE_FIELDS.join(","),
+                    start,
+                    limit: PAGE_LIMIT,
+                },
+                signal
+            ),
+        { signal }
+    );
 }
 
 /** Everyone within `degrees` of rootId (CC7), with their degree and parents, the starting profile included. */
@@ -242,7 +411,7 @@ export async function fetchCc7(rootId, { api, signal, onProgress = () => {}, deg
 
 function addTreePerson(people, p, askedDegree, isExact = false) {
     const id = Number(p?.Id);
-    if (!id) return;
+    if (!(id > 0)) return; // a private placeholder
     const metaDegree = p.Meta && Number.isFinite(Number(p.Meta.Degrees)) ? Number(p.Meta.Degrees) : null;
     const degree = isExact ? askedDegree : (metaDegree ?? askedDegree);
     const prev = people.get(id);
@@ -259,6 +428,30 @@ function addTreePerson(people, p, askedDegree, isExact = false) {
     });
 }
 
+/**
+ * WikiTree will not show the starting profile, or list its relatives, to this viewer: the profile is private and the
+ * viewer is not logged in to the Tree Apps, or not on its Trusted List.
+ */
+export class PrivateProfileError extends Error {
+    constructor(message = "The starting profile is private.") {
+        super(message);
+        this.name = "PrivateProfileError";
+    }
+}
+
+/**
+ * What to tell the viewer, in the words the other Tree Apps use: Apps Login when logged out, the Trusted List when
+ * logged in. @param {{isLoggedIn:boolean, name?:string}} user
+ */
+export function privateProfileMessage(wtId, user = {}) {
+    const start = `The starting profile data could not be retrieved${wtId ? ` for ${wtId}` : ""}: it is private.`;
+    return user.isLoggedIn
+        ? `${start} You are logged in to the Tree Apps${user.name ? ` as ${user.name}` : ""}. ` +
+              "You may need to be added to the starting profile's Trusted List."
+        : `${start} Try the Apps Login at the top of the page. The Tree Apps have their own login, so a private ` +
+              "profile, even your own, needs it.";
+}
+
 /** True when the browser lost the connection ("Failed to fetch" in Chrome, "NetworkError" in Firefox, "Load failed" in Safari). */
 export function isNetworkError(err) {
     if (err?.name === "AbortError") return false;
@@ -267,19 +460,29 @@ export function isNetworkError(err) {
     );
 }
 
+/** True for a server error from WikiTree's API (postToAPI throws "HTTP error! Status: 502: ..."). */
+export function isServerError(err) {
+    return /status: 5\d\d/i.test(String(err?.message ?? err ?? ""));
+}
+
 export const NETWORK_MESSAGE =
     "The connection to WikiTree dropped (Failed to fetch). Check your internet connection and try again.";
 
 const RETRY_DELAYS = [1500, 4000]; // milliseconds before the second and third tries
 
-/** Runs fn, trying again after a pause when the connection drops. Other errors are not retried. */
+/**
+ * Runs a WikiTree API call, trying again after a pause when the connection drops or the server has a passing error.
+ * Other errors are not retried. Not used for WikiTree+, which is never retried (see plusQueue).
+ */
 export async function withRetry(fn, { signal, delays = RETRY_DELAYS } = {}) {
     for (let attempt = 0; ; attempt++) {
         try {
             return await fn();
         } catch (err) {
-            if (!isNetworkError(err) || attempt >= delays.length || signal?.aborted) throw err;
+            const isPassing = isNetworkError(err) || isServerError(err);
+            if (!isPassing || attempt >= delays.length || signal?.aborted) throw err;
             await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+            if (signal?.aborted) throw abortError();
         }
     }
 }
@@ -395,19 +598,20 @@ export function chosenParents(options, choice) {
 }
 
 /**
- * The ancestors reachable from startIds (each start included when it is in the map), through listed and birth
- * parents alike. The API's ancestors list holds both kinds at every generation.
+ * The ancestors reachable from startIds (the starting profile's chosen parents, generation 1), through listed and
+ * birth parents alike; the API's ancestors list holds both kinds at every generation. Each keeps the generation
+ * counted on the chosen side, which can be further back than the API's degree through the other parents.
  */
 export function ancestorsFrom(ancestors, startIds) {
     const kept = new Map();
-    const queue = [...startIds];
+    const queue = startIds.map((id) => [id, 1]);
     while (queue.length) {
-        const id = queue.shift();
+        const [id, generation] = queue.shift(); // breadth first, so the first visit is the nearest
         if (kept.has(id) || !ancestors.has(id)) continue;
         const a = ancestors.get(id);
-        kept.set(id, a);
+        kept.set(id, { ...a, degree: generation });
         for (const parent of [a.father, a.mother, a.bioFather, a.bioMother]) {
-            if (parent > 0 && !kept.has(parent)) queue.push(parent);
+            if (parent > 0 && !kept.has(parent)) queue.push([parent, generation + 1]);
         }
     }
     return kept;
@@ -451,7 +655,11 @@ export async function searchAncestral({
     onFound = () => {},
 }) {
     const gens = Math.max(1, Math.min(MAX_GENERATIONS, Number(generations) || DEFAULT_GENERATIONS));
-    const { people: allAncestors, isPartial } = await fetchByGeneration(rootId, "ancestors", gens, {
+    const {
+        people: allAncestors,
+        isPartial,
+        error: walkError,
+    } = await fetchByGeneration(rootId, "ancestors", gens, {
         api,
         signal,
         onProgress: (count, generation) => onStatus({ stage: "ancestors", count, generation }),
@@ -462,6 +670,7 @@ export async function searchAncestral({
     const report = (found) => onFound({ ...found, ancestors, descendants, generations: gens });
     let dataDate = "";
     let failedQueries = 0;
+    let stoppedAt = 0;
     const plus = async (query) => {
         const res = await fetchPlusIds(query, { fetchFn, signal });
         dataDate = dataDate || res.dataDate;
@@ -482,8 +691,14 @@ export async function searchAncestral({
     onStatus({ stage: "notable-descendants" });
     const descendantIds = (await plus(`Descendants=${Number(rootId)} NotableProfile`)).filter((id) => !seen.has(id));
     if (descendantIds.length) {
-        descendants = (await fetchByGeneration(rootId, "descendants", MAX_DESCENDANT_GENERATIONS, { api, signal }))
-            .people;
+        // Only far enough down to reach the notable ones; their generation names the relationship.
+        descendants = (
+            await fetchByGeneration(rootId, "descendants", MAX_DESCENDANT_GENERATIONS, {
+                api,
+                signal,
+                stopWhenFound: new Set(descendantIds),
+            })
+        ).people;
         descendantIds.forEach((id) => seen.add(id));
         await report({ kind: "descendant", ids: descendantIds });
     }
@@ -495,18 +710,18 @@ export async function searchAncestral({
             .map((a) => a.id);
         const queries = descendantsQueries(generationIds);
         const found = [];
-        for (let q = 0; q < queries.length; q++) {
+        for (let q = 0; q < queries.length && !failedQueries; q++) {
             onStatus({ stage: "cousins", generation, query: q + 1, queries: queries.length });
-            let ids = null;
-            for (let attempt = 0; attempt < 2 && ids === null; attempt++) {
-                try {
-                    ids = await plus(queries[q]);
-                } catch (err) {
-                    if (err?.name === "AbortError") throw err;
-                    if (attempt === 1) failedQueries++;
-                }
+            let ids = [];
+            try {
+                ids = await plus(queries[q]);
+            } catch (err) {
+                // Not retried, and no more searches after it: a search that failed may still be running on WikiTree+.
+                if (err?.name === "AbortError" || err?.name === "PlusUnavailableError") throw err;
+                failedQueries++;
+                stoppedAt = generation;
             }
-            for (const id of ids || []) {
+            for (const id of ids) {
                 if (!seen.has(id)) {
                     seen.add(id);
                     found.push(id);
@@ -514,8 +729,9 @@ export async function searchAncestral({
             }
         }
         if (found.length) await report({ kind: "cousin", ids: found, generation });
+        if (failedQueries) break;
     }
-    return { ancestors, descendants, generations: gens, dataDate, failedQueries, isPartial };
+    return { ancestors, descendants, generations: gens, dataDate, failedQueries, stoppedAt, isPartial, walkError };
 }
 
 // ---------- shaping ----------

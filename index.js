@@ -19,7 +19,7 @@ window.addEventListener("DOMContentLoaded", (event) => {
                     "#wt-api-login"
                 ).innerHTML = `Logged into Apps: ${user.name} (<a class="apiLogout" href="#">Logout</a>)`;
             },
-            onUnlogged: () => {
+            onUnlogged: ({ loginFailed = false } = {}) => {
                 document.querySelector("#wt-api-login").innerHTML = `
           <form id="appsLoginForm" action="https://api.wikitree.com/api.php" method="POST">
               <input type="hidden" name="appId" value="TA-LoginManager">
@@ -30,7 +30,8 @@ window.addEventListener("DOMContentLoaded", (event) => {
           </form>
           `;
 
-                if (typeof requireAppsLogin != "undefined" && requireAppsLogin) {
+                // Not after a failed login, or a page that requires it would send the reader round in a loop.
+                if (!loginFailed && typeof requireAppsLogin != "undefined" && requireAppsLogin) {
                     $("#appsLoginForm").submit();
                 }
             },

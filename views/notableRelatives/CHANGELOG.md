@@ -21,6 +21,23 @@ Fixes and requests from the first testers on G2G.
 -   **Ancestors with accented, hyphenated, or apostrophe surnames are now searched.** WikiTree+ split a WikiTree ID
     such as "Söderblom-7", "Szent-Györgyi-4", or "O'Brien-1" and found nothing, so their notable relatives were
     silently missed. The searches now use each profile's number instead.
+-   **Gentler on WikiTree+.** WikiTree+ had to block the app after it sent many heavy Descendants searches at once
+    (reported by Aleš Trtnik, Trtnik-2). Now the app sends one WikiTree+ request at a time with a pause between,
+    lets a request finish instead of abandoning it (so a new search never piles on top of an old one), never resends
+    a failed search, asks about at most 20 ancestors per request, stops at once if WikiTree+ refuses, and waits for
+    the generations box to settle before searching. The default is now 8 generations back instead of 12.
+-   **Results are saved in this browser for a week**, so looking at the same person again asks WikiTree+ nothing.
+    "Search again" asks afresh. The list of all notable profiles is saved for a day.
+-   **Private starting profiles** now get the same message as the other Tree Apps: "Try the Apps Login" when logged
+    out, or the Trusted List when logged in, instead of "WikiTree did not return the starting profile."
+-   **More reliable long searches:** private relatives no longer end the ancestor search early; passing WikiTree
+    server errors are retried; whatever goes wrong part way, the relatives already found stay on the page with a
+    note; Stop works from the very start; "Everyone within 7 degrees" has a Stop button and keeps a partial list.
+-   **Fixes:** the Biological / Adoptive / Both choice and generations now follow the chosen parents; a filter in a
+    shared link that doesn't apply no longer hides everything; reopening a saved result no longer shows the previous
+    person's parent choice; the notable descendants' generations are found without walking every descendant.
+-   **Apps Login** (shared with all Tree Apps): a failed sign-in now shows the Apps Login button again instead of
+    leaving the page silently logged out.
 -   **Dropped connections no longer end a long search.** When the internet connection drops ("Failed to fetch"), the app
     tries again twice, and if it still fails it keeps the relatives found so far and says what happened. Reported by
     Debra Akin.

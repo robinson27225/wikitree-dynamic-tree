@@ -73,6 +73,13 @@
 .nr-view .nr-filters.hidden {
   display: none;
 }
+.nr-view .nr-saved {
+  color: var(--nr-muted);
+  white-space: nowrap;
+}
+.nr-view .nr-saved .nr-again {
+  margin-left: 4px;
+}
 .nr-view .nr-parents {
   display: flex;
   flex-wrap: wrap;

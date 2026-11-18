@@ -25,6 +25,10 @@ const IDEA_PROFILE = "https://www.wikitree.com/wiki/Ashton-4458";
 const WIKI = "https://www.wikitree.com/wiki/";
 const FILTER_PARAMS = ["mode", "gens", "parents", "group", "cat", "loc", "place", "marker", "q"];
 const PAGE_SIZE = 60; // cards shown per group before "Show more"
+const GENS_DELAY_MS = 800; // wait for the generations box to settle before searching
+const SAVED_KEY = "notableRelatives:results:v1:";
+const SAVED_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // WikiTree+ data changes weekly
+const SAVED_MAX_CHARS = 2_000_000;
 
 const esc = (s) =>
     String(s ?? "").replace(
@@ -112,12 +116,18 @@ window.NotableRelativesView = class NotableRelativesView extends View {
 
         const $c = $(this.container);
         $c.find("input[name=nr-mode]").on("change", (e) => this.switchMode(e.target.value, this.gens));
-        $c.find(".nr-gens").on("change", (e) => this.switchMode("anc", this.clampGens(e.target.value)));
+        // Stepping through the box with the arrow keys fires "change" for every value; search only once it settles.
+        $c.find(".nr-gens").on("change", (e) => {
+            clearTimeout(this.gensTimer);
+            const gens = this.clampGens(e.target.value);
+            this.gensTimer = setTimeout(() => this.switchMode("anc", gens), GENS_DELAY_MS);
+        });
         $c.find(".nr-stop").on("click", () => this.stop());
         this.start();
     }
 
     close() {
+        clearTimeout(this.gensTimer);
         this.controller?.abort();
         this.controller = null;
     }
@@ -185,9 +195,11 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         wtViewRegistry.clearStatus();
 
         const signal = this.controller.signal;
-        const cached = NotableRelativesView.cache.get(this.cacheKey());
+        const cached = NotableRelativesView.cache.get(this.cacheKey()) || this.readSaved();
         if (cached) {
             this.data = cached;
+            this.root = cached.root;
+            NotableRelativesView.cache.set(this.cacheKey(), cached);
             this.renderParentChoice();
             this.showStop(false);
             this.showResults();
@@ -198,19 +210,74 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         }
         const load = this.mode === "cc7" ? this.loadCc7(signal) : this.loadAncestral(signal);
         load.catch((err) => {
-            if (err?.name === "AbortError" || signal.aborted) return;
+            if (err?.name === "AbortError" || signal.aborted) {
+                // Stopped before anything was found (a stop later is handled by the search itself).
+                if (this.isStopping && this.controller?.signal === signal) {
+                    this.setProgress("");
+                    this.setSummary("Search stopped.");
+                    this.showStop(false);
+                }
+                return;
+            }
             console.error("Notable Relatives:", err);
             this.setProgress("");
             this.setSummary("");
             this.showStop(false);
-            wtViewRegistry.showError(
-                nr.isLimitError(err)
-                    ? nr.LIMIT_MESSAGE
-                    : nr.isNetworkError(err)
-                      ? nr.NETWORK_MESSAGE
-                      : err?.message || String(err)
-            );
+            wtViewRegistry.showError(this.errorMessage(err));
         });
+    }
+
+    errorMessage(err) {
+        if (err?.name === "PrivateProfileError") {
+            const user = window.wtViewRegistry?.session?.lm?.user;
+            const wtId = this.root?.wtId || new URLSearchParams(window.location.hash.slice(1)).get("name") || "";
+            return nr.privateProfileMessage(wtId, { isLoggedIn: !!user?.isLoggedIn?.(), name: user?.name });
+        }
+        if (err?.name === "PlusUnavailableError") return nr.PLUS_UNAVAILABLE_MESSAGE;
+        if (nr.isLimitError(err)) return nr.LIMIT_MESSAGE;
+        if (nr.isNetworkError(err)) return nr.NETWORK_MESSAGE;
+        if (nr.isServerError(err))
+            return "WikiTree's server had a problem answering. Please try again in a few minutes.";
+        return err?.message || String(err);
+    }
+
+    // ---------- results saved in this browser ----------
+
+    // A finished search is kept for a week (WikiTree+ data changes weekly), so looking at the same person again asks
+    // WikiTree+ nothing. "Search again" forgets it.
+    readSaved() {
+        try {
+            const saved = JSON.parse(nr.browserStorage()?.getItem(SAVED_KEY + this.cacheKey()) || "null");
+            if (!saved?.data || Date.now() - saved.savedAt > SAVED_MAX_AGE) return null;
+            return { ...saved.data, savedAt: saved.savedAt };
+        } catch {
+            return null;
+        }
+    }
+
+    save(data) {
+        const storage = nr.browserStorage();
+        if (!storage) return;
+        try {
+            for (const key of Object.keys(storage)) {
+                if (!key.startsWith(SAVED_KEY)) continue;
+                const savedAt = JSON.parse(storage.getItem(key) || "{}").savedAt || 0;
+                if (Date.now() - savedAt > SAVED_MAX_AGE) storage.removeItem(key);
+            }
+            const text = JSON.stringify({ savedAt: Date.now(), data });
+            if (text.length <= SAVED_MAX_CHARS) storage.setItem(SAVED_KEY + this.cacheKey(), text);
+        } catch {
+            // full or blocked: the results stay for this visit only
+        }
+    }
+
+    forgetSaved() {
+        NotableRelativesView.cache.delete(this.cacheKey());
+        try {
+            nr.browserStorage()?.removeItem(SAVED_KEY + this.cacheKey());
+        } catch {
+            // nothing saved
+        }
     }
 
     stop() {
@@ -233,8 +300,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             },
             signal
         );
+        // A profile private to the viewer comes back as a placeholder with a negative id and no name.
         const p = Object.values(result?.[0]?.people || {}).find((x) => Number(x.Id) === this.personId);
-        if (!p?.Name) throw new Error("WikiTree did not return the starting profile.");
+        if (!p?.Name) throw new nr.PrivateProfileError();
         const name = p?.Derived?.ShortName || [p.FirstName, p.LastNameAtBirth].filter(Boolean).join(" ") || p.Name;
         this.root = { id: this.personId, wtId: p.Name, name, parents: nr.parentOptions(p) };
         return this.root;
@@ -299,10 +367,15 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 },
             });
         } catch (err) {
-            // Keep what was found when WikiTree starts limiting requests part way through a long search.
-            if (nr.isLimitError(err) && data.records.length) data.isLimited = true;
-            else if (nr.isNetworkError(err) && data.records.length) data.isOffline = true;
-            else if (!(this.isStopping && signal.aborted)) throw err;
+            // Keep what was found when something goes wrong part way through a long search.
+            if (err?.name === "AbortError" || signal.aborted) {
+                if (!this.isStopping) throw err; // replaced by a new search
+            } else if (data.records.length) {
+                console.error("Notable Relatives:", err);
+                data.problem = this.errorMessage(err);
+            } else {
+                throw err;
+            }
         }
         this.showStop(false);
         if (result) {
@@ -310,18 +383,17 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             data.ancestorCount = result.ancestors.size; // on the chosen parents' side only
             data.dataDate = result.dataDate;
             data.failedQueries = result.failedQueries;
+            data.stoppedAt = result.stoppedAt;
             data.isPartial = result.isPartial;
             data.isDone = true;
-            NotableRelativesView.cache.set(key, data); // a stopped search is not kept, so it can be run again
+            // A stopped or incomplete search is not kept, so it can be run again.
+            if (!data.isPartial && !data.failedQueries && this.data === data) {
+                NotableRelativesView.cache.set(key, data);
+                this.save(data);
+            }
         } else {
             data.isStopped = true;
-            if (data.isLimited) {
-                this.setProgress("");
-                wtViewRegistry.showWarning(`${nr.LIMIT_MESSAGE} The relatives found so far are shown.`);
-            } else if (data.isOffline) {
-                this.setProgress("");
-                wtViewRegistry.showWarning(`${nr.NETWORK_MESSAGE} The relatives found so far are shown.`);
-            }
+            this.setProgress("");
         }
         if (this.data === data) this.showResults();
     }
@@ -331,6 +403,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     async loadCc7(signal) {
         const key = this.cacheKey();
         this.setSummary("Looking for notable relatives…");
+        this.showStop(true);
         const root = await this.loadRoot(signal);
         this.renderParentChoice();
         this.setSummary(`Looking for notable relatives of ${esc(root.name)}…`);
@@ -383,12 +456,15 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             cc7Count: cc7.people.size,
             isDone: true,
         };
-        NotableRelativesView.cache.set(key, data);
         if (this.controller?.signal !== signal) return;
+        this.showStop(false);
+        if (!data.isPartial) NotableRelativesView.cache.set(key, data);
         this.data = data;
         this.setProgress("");
         this.showResults();
         await this.findMissingDegrees(this.api, signal);
+        // Saved once the degrees found through private profiles are filled in.
+        if (!data.isPartial && !signal.aborted) this.save(data);
     }
 
     // Notables WikiTree+ lists in the CC7 that the getPeople walk did not reach (usually because, without a login,
@@ -475,13 +551,20 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             );
             if (d.isDone || d.isStopped) this.setProgress("");
         }
-        if (d.isPartial || d.failedQueries) {
+        if (d.problem) {
+            wtViewRegistry.showWarning(`${d.problem} The relatives found so far are shown.`);
+        } else if (d.failedQueries) {
             wtViewRegistry.showWarning(
-                d.failedQueries
-                    ? `WikiTree+ did not answer ${plural(d.failedQueries, "search")}, so some relatives may be missing.`
-                    : "WikiTree stopped before listing every relative, so some may be missing. Try again later."
+                `WikiTree+ did not answer a search for generation ${d.stoppedAt}, so the search stopped there to ` +
+                    "spare the server. Some relatives may be missing. Please try again later."
+            );
+        } else if (d.isPartial) {
+            wtViewRegistry.showWarning(
+                "WikiTree stopped before listing every relative, so some may be missing. Try again later."
             );
         }
+        if (d.savedAt) this.showSavedNote(d.savedAt);
+        if (d.isDone || d.isStopped) this.dropUnknownGroups();
 
         if (!d.records.length) {
             this.container.querySelector(".nr-filters").classList.add("hidden");
@@ -504,6 +587,33 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         const filters = this.container.querySelector(".nr-filters");
         if (!filters.contains(document.activeElement)) this.renderFilters();
         this.renderResults();
+    }
+
+    // Results reused from an earlier visit say so, with a way to ask WikiTree again.
+    showSavedNote(savedAt) {
+        const summary = this.container.querySelector(".nr-summary");
+        if (!summary || summary.querySelector(".nr-saved")) return;
+        const when = new Date(savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+        summary.insertAdjacentHTML(
+            "beforeend",
+            ` <span class="nr-saved">Saved in this browser on ${esc(when)}.
+                <button type="button" class="small button nr-again">Search again</button></span>`
+        );
+        summary.querySelector(".nr-again").addEventListener("click", () => {
+            this.forgetSaved();
+            this.start();
+        });
+    }
+
+    // A group in the address (from a shared link or the other search) that these results do not have would hide
+    // everything with no box to untick, so it is dropped once the search is over.
+    dropUnknownGroups() {
+        const known = new Set(this.data.records.map((r) => r.groupKey));
+        const kept = new Set([...this.filters.groups].filter((g) => known.has(g)));
+        if (kept.size === this.filters.groups.size) return;
+        this.filters.groups = kept;
+        this.writeParams();
+        this.renderFilters();
     }
 
     renderFilters() {
