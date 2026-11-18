@@ -20,29 +20,25 @@ Inspired by Relative Finder, which finds famous relatives on FamilySearch.
 ### Shared ancestors (default)
 
 Finds notable ancestors, notable descendants, and notable cousins through shared ancestors up to 15 generations
-back. You choose 3–15 generations; the default is 12.
+back. You choose 3–15 generations; the default is 8.
 
-1. **Ancestors** come from the WikiTree API, one generation at a time (`getPeople ancestors=g minGeneration=g`).
-2. **Notable ancestors** come from one WikiTree+ query, `Ancestors=<ID> NotableProfile`, which covers every
-   generation. Those within the chosen generations are named exactly ("6th great-grandfather"). Older ones are
-   listed in their own group.
-3. **Notable descendants** come from one WikiTree+ query, `Descendants=<ID> NotableProfile`. Their generations come
-   from the API.
-4. **Notable cousins**: for each generation of ancestors, nearest first, WikiTree+ is asked for their notable
-   descendants: `Descendants=A NotableProfile OR Descendants=B NotableProfile …`. These run in batches of about
-   3,000 characters. WikiTree+ binds AND tighter than OR, so each ancestor needs its own `NotableProfile`. Each
-   notable goes in the group of the first generation it turns up in, which is its **closest shared ancestors**
-   ("Shared 7th great-grandparents: up to 8th cousins, some removed"). An older cousin who shares those ancestors
-   is a closer cousin, removed: shared 3rd great-grandparents can make a 2nd cousin twice removed.
+1. **Family** comes from ONE WikiTree API call, `getPeople ancestors=<gens> descendants=10` (no descendants for
+   "ancestors only"), when it fits in one answer of 1,000 relatives; otherwise a generation at a time
+   (`getPeople ancestors=g minGeneration=g`).
+2. **One WikiTree+ search**, `descendants="<ID>,<ID>,…" NotableProfile` (numeric user IDs; no `Format` parameter,
+   since `.json` says it; sent by POST when too long for a web address). The list holds only the furthest-back
+   ancestors on each line, one partner per couple: everyone descended from a child is descended from that child's
+   parents, and a couple shares its descendants. Each list includes the people named in it, so the answer also
+   holds the notable ancestors within the chosen generations, and none further back.
+   **What to find** (`find=` in the address): `all` (the default), `relatives` (the same search, ancestors left
+   out), or `ancestors`, which asks `ancestors="<ID>" NotableProfile` instead (or `ancestors="<chosen parents>"`
+   with a Biological or Adoptive choice) and keeps only the ancestors within the chosen generations.
+3. **Sorting the answer:** ancestors are those in the family call, named exactly ("6th great-grandfather"). The
+   starting profile's own descendants are those in its descendants list, named exactly ("grandson"). Everyone else is
+   a cousin; each card's **Relationship** link opens WikiTree's Relationship Finder for the exact relationship.
 
-Results appear group by group as each generation finishes. Stop keeps what has been found so far. Each card's
-**Relationship** link opens WikiTree's Relationship Finder for the exact relationship. Working that out here would
-mean reading each notable's whole ancestry: about 40 seconds for one royal, and a search can turn up thousands of
-notables.
-
-Measured for one member's tree (Robinson-27225, 1,649 ancestors in 12 generations): 1,786 notables by generation 10.
-At 15 generations, about 11,000 notables. Time depends on how busy WikiTree+ is: generations 1–10 took 25 seconds
-to 2 minutes, and generations 13–15 can add several minutes.
+WikiTree+ is asked one request at a time with a pause after each, a request is never abandoned or resent, and a
+refusal pauses all WikiTree+ requests for 15 minutes (see `plusQueue` in `notable_data.js`).
 
 ### Within 7 degrees
 

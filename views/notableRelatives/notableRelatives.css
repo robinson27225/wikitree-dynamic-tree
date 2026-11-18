@@ -73,6 +73,13 @@
 .nr-view .nr-filters.hidden {
   display: none;
 }
+.nr-view .nr-problem {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 4px solid #cc0000;
+  background: #ffeeee;
+  color: #333333;
+}
 .nr-view .nr-saved {
   color: var(--nr-muted);
   white-space: nowrap;
@@ -184,11 +191,6 @@
 .nr-view .nr-group-note {
   color: var(--nr-muted);
   font-style: italic;
-}
-.nr-view .nr-groups-hint {
-  color: var(--nr-muted);
-  font-size: 0.9em;
-  white-space: nowrap;
 }
 .nr-view .nr-more-btn {
   margin: 0 10px 10px;

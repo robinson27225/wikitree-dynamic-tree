@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     plusSettings,
+    plusSearchUrl,
     fetchCc7,
     fetchPlusNotableIds,
     fetchProfiles,
@@ -11,7 +12,8 @@ import {
     applyFilters,
     facets,
     groupRecords,
-    descendantsQueries,
+    descendantsQuery,
+    topAncestors,
     fetchByGeneration,
     searchAncestral,
     buildAncestralRecords,
@@ -37,6 +39,12 @@ function fakeApi(pages) {
 
 plusSettings.pauseMs = 0; // no pause between WikiTree+ requests in tests
 
+/** A fake WikiTree API for which the family is always too big for one call, so the generation walk is tested. */
+const tooBigForOneCall = (api) => async (data) =>
+    data.minGeneration === undefined && (data.ancestors || data.nuclear)
+        ? [{ status: "Maximum number of profiles (1025) reached.", resultByKey: {}, people: {} }]
+        : api(data);
+
 const person = (Id, Degrees, extra = {}) => ({
     Id,
     Name: `P-${Id}`,
@@ -46,8 +54,9 @@ const person = (Id, Degrees, extra = {}) => ({
     ...extra,
 });
 
-test("fetchCc7 asks one degree at a time and follows pages within a degree", async () => {
+test("fetchCc7, for a family too big for one call, asks one degree at a time and follows pages", async () => {
     const { api, calls } = fakeApi([
+        { status: MAX, people: {} },
         { status: "", people: { 1: person(1, undefined, { Father: 7 }) } },
         { status: "", people: { 2: person(2, 1, { Father: 1 }) } },
         { status: MAX, people: { 3: person(3, 2) } },
@@ -59,6 +68,7 @@ test("fetchCc7 asks one degree at a time and follows pages within a degree", asy
     assert.deepEqual(
         calls.map((c) => [c.nuclear, c.minGeneration, c.start]),
         [
+            [7, undefined, undefined],
             [undefined, undefined, undefined],
             [1, 1, 0],
             [2, 2, 0],
@@ -81,16 +91,18 @@ test("fetchCc7 asks one degree at a time and follows pages within a degree", asy
 });
 
 test("fetchCc7 stops paging when a page adds nobody, and reports other errors", async () => {
+    const tooBig = { status: MAX, people: {} };
     const root = { status: "", people: { 1: person(1, 0) } };
     const same = { status: MAX, people: { 2: person(2, 1) } };
-    const { api, calls } = fakeApi([root, same, same, { status: "", people: {} }]);
+    const { api, calls } = fakeApi([tooBig, root, same, same, { status: "", people: {} }]);
     await fetchCc7(1, { api, degrees: 2 });
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
 
-    const failing = fakeApi([root, { status: "Limit exceeded", people: {} }]);
+    const failing = fakeApi([tooBig, root, { status: "Limit exceeded", people: {} }]);
     await assert.rejects(fetchCc7(1, { api: failing.api }), /Limit exceeded/);
 
     const partial = fakeApi([
+        tooBig,
         root,
         { status: "Something odd", people: { 2: person(2, 1) } },
         { status: "", people: {} },
@@ -108,7 +120,7 @@ test("fetchPlusNotableIds asks WikiTree+ for NotableProfile in the CC7", async (
         };
     };
     const res = await fetchPlusNotableIds(722, { fetchFn });
-    assert.deepEqual(res, { ids: [722, 726], dataDate: "2026-11-01" });
+    assert.deepEqual(res, { ids: [722, 726], dataDate: "2026-11-01", isCut: false });
     assert.match(url, /WTWebProfileSearch\/TA-notableRelatives\.json\?Query=CC7%3D722%20NotableProfile/);
     assert.match(url, /appID=TA-notableRelatives/);
 
@@ -314,17 +326,38 @@ test("fetchConnection and applyConnection fill in a missing degree", async () =>
     assert.equal(applyConnection(untouched, null).degree, null);
 });
 
-test("descendantsQueries gives each ancestor its own NotableProfile and splits long queries", () => {
+test('descendantsQuery puts every id in one descendants="..." term', () => {
     // Numeric ids: WikiTree+ splits an unquoted "Söderblom-7" or "O'Brien-1" and finds nothing.
-    assert.deepEqual(descendantsQueries([21773300, 2]), [
-        "Descendants=21773300 NotableProfile OR Descendants=2 NotableProfile",
+    assert.equal(descendantsQuery([21773300, 2]), 'descendants="21773300,2" NotableProfile');
+    assert.ok(!descendantsQuery([1, 2, 3]).includes(" OR "), "never several Descendants searches");
+});
+
+test("topAncestors keeps only the furthest-back ancestor on each line", () => {
+    // 2 and 3 are the parents; 4 and 5 are 2's parents; 3's parents are unknown.
+    const tree = new Map([
+        [2, { id: 2, father: 4, mother: 5, bioFather: 0, bioMother: 0 }],
+        [3, { id: 3, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+        [4, { id: 4, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
+        [5, { id: 5, father: 0, mother: 0, bioFather: 0, bioMother: 0 }],
     ]);
-    const many = Array.from({ length: 200 }, (_, i) => 10000000 + i);
-    const queries = descendantsQueries(many, 1000);
-    assert.ok(queries.length > 1);
-    assert.ok(queries.every((q) => encodeURIComponent(q).length <= 1000));
-    assert.equal(queries.join(" OR ").split(" OR ").length, 200, "every ancestor is asked about once");
-    assert.deepEqual(descendantsQueries([]), []);
+    assert.deepEqual(topAncestors(tree), [3, 4, 5]);
+});
+
+test("a very long search is sent by POST, which WikiTree+ allows when necessary", async () => {
+    resetPlusQueue();
+    let seen;
+    const fetchFn = async (url, init) => {
+        seen = { url, init };
+        return json({ response: { profiles: [9] } });
+    };
+    const ids = Array.from({ length: 1000 }, (_, i) => 10000000 + i);
+    const res = await fetchPlusIds(descendantsQuery(ids), { fetchFn, maxProfiles: 1000000 });
+    assert.deepEqual(res.ids, [9]);
+    assert.equal(seen.init.method, "POST");
+    assert.ok(!seen.url.includes("Query="), "the search is in the body, not the address");
+    assert.equal(seen.init.body.get("Query"), descendantsQuery(ids));
+    assert.equal(seen.init.body.get("MaxProfiles"), "1000000");
+    assert.equal(seen.init.body.get("appID"), "TA-notableRelatives");
 });
 
 test("fetchByGeneration asks for ancestors one generation at a time", async () => {
@@ -352,10 +385,13 @@ test("fetchByGeneration asks for ancestors one generation at a time", async () =
     );
 });
 
-test("searchAncestral finds ancestors, descendants and cousins, nearest generation first", async () => {
-    // Ancestors: 2, 3 (parents, gen 1) and 4 (grandparent, gen 2). Descendant: 10 (child).
+test("searchAncestral finds ancestors, then descendants and cousins in ONE WikiTree+ search", async () => {
+    // Ancestors: 2, 3 (parents) and 4 (2's father). Descendant: 10 (child).
     const apiPages = {
-        "ancestors:1": { 2: person(2, 1, { Name: "Dad-2" }), 3: person(3, 1, { Name: "Mum-3" }) },
+        "ancestors:1": {
+            2: person(2, 1, { Name: "Dad-2", Father: 4 }),
+            3: person(3, 1, { Name: "Mum-3" }),
+        },
         "ancestors:2": { 4: person(4, 2, { Name: "Gran-4" }) },
         "ancestors:3": {},
         "descendants:1": { 10: person(10, 1) },
@@ -365,68 +401,52 @@ test("searchAncestral finds ancestors, descendants and cousins, nearest generati
         const relation = data.ancestors ? "ancestors" : "descendants";
         return [{ status: "", people: apiPages[`${relation}:${data[relation]}`] || {} }];
     };
-    const plusAnswers = new Map([
-        ["Ancestors=1 NotableProfile", [4, 77]], // 4 is within reach, 77 further back
-        ["Descendants=1 NotableProfile", [10]],
-        ["Descendants=2 NotableProfile OR Descendants=3 NotableProfile", [10, 20, 21]],
-        ["Descendants=4 NotableProfile", [2, 20, 30]],
-    ]);
+    // 3 and 4 are the furthest back on their lines (2 is covered by 4). One answer for everything: the asked ids and
+    // the ancestors below them (3, 4, 2), the starting profile, a descendant (10) and cousins (20, 21, 30).
+    const plusAnswers = new Map([['descendants="3,4" NotableProfile', [1, 3, 4, 2, 10, 20, 21, 30]]]);
     const asked = [];
     const fetchFn = async (url) => {
         const query = decodeURIComponent(/Query=([^&]*)/.exec(url)[1]);
         asked.push(query);
-        return {
-            ok: true,
-            json: async () => ({
-                response: { profiles: plusAnswers.get(query) || [] },
-                debug: { dataDate: "2026-11-01" },
-            }),
-        };
+        return json({ response: { profiles: plusAnswers.get(query) || [] }, debug: { dataDate: "2026-11-01" } });
     };
     const found = [];
     const result = await searchAncestral({
         rootId: 1,
         generations: 3,
-        api,
+        api: tooBigForOneCall(api),
         fetchFn,
-        onFound: (f) => found.push([f.kind, f.generation ?? null, f.ids]),
+        onFound: (f) => found.push([f.kind, f.ids]),
     });
     assert.deepEqual(found, [
-        ["ancestor", null, [4]],
-        ["ancestor-far", null, [77]],
-        ["descendant", null, [10]],
-        ["cousin", 1, [20, 21]],
-        ["cousin", 2, [30]],
+        ["ancestor", [3, 4, 2]],
+        ["descendant", [10]],
+        ["cousin", [20, 21, 30]],
     ]);
+    assert.deepEqual(asked, ['descendants="3,4" NotableProfile'], "one search in all");
     assert.equal(result.dataDate, "2026-11-01");
     assert.equal(result.ancestors.get(4).degree, 2);
     assert.equal(result.descendants.get(10).degree, 1);
-    assert.equal(asked.length, 4, "generation 3 has no ancestors, so nothing is asked");
 });
 
-test("searchAncestral never retries a failed WikiTree+ search, and stops searching after it", async () => {
-    const api = async (data) => [
-        {
-            status: "",
-            people:
-                data.ancestors === 1
-                    ? { 2: person(2, 1, { Name: "Dad-2" }) }
-                    : data.ancestors === 2
-                      ? { 4: person(4, 2) }
-                      : {},
-        },
-    ];
+test("searchAncestral never retries its one WikiTree+ search", async () => {
+    const api = async (data) => [{ status: "", people: data.ancestors === 1 ? { 2: person(2, 1) } : {} }];
     const asked = [];
+    const found = [];
     const fetchFn = async (url) => {
         asked.push(url);
-        if (url.includes("Descendants%3D2%20")) return { ok: false, status: 500 };
-        return { ok: true, json: async () => ({ response: { profiles: [] } }) };
+        return { ok: false, status: 500 };
     };
-    const result = await searchAncestral({ rootId: 1, generations: 3, api, fetchFn });
-    assert.equal(asked.filter((u) => u.includes("Descendants%3D2%20")).length, 1, "asked once, not retried");
-    assert.ok(!asked.some((u) => u.includes("Descendants%3D4%20")), "generation 2 is not searched after the failure");
+    const result = await searchAncestral({
+        rootId: 1,
+        generations: 3,
+        api,
+        fetchFn,
+        onFound: (f) => found.push(f.kind),
+    });
+    assert.equal(asked.length, 1, "not retried");
     assert.equal(result.failedQueries, 1);
-    assert.equal(result.stoppedAt, 1);
+    assert.deepEqual(found, []);
 });
 
 test("buildAncestralRecords labels each kind", () => {
@@ -454,22 +474,20 @@ test("buildAncestralRecords labels each kind", () => {
         ["grandmother", "anc", "Notable ancestors"]
     );
     assert.equal(build("descendant", [10]).relationship, "son");
-    const old = build("ancestor-far", [77]);
-    assert.deepEqual([old.groupKey, old.groupHeading], ["anc-far", "Notable ancestors more than 12 generations back"]);
     const cousin = build("cousin", [30], 9);
     assert.deepEqual(
         [cousin.groupKey, cousin.groupHeading, cousin.groupNote, cousin.relationship, cousin.countries],
         [
-            "g9",
-            "Shared 7th great-grandparents",
-            "up to 8th cousins, some removed",
-            "shares the starting profile's 7th great-grandparents",
+            "cousins",
+            "Notable cousins",
+            "share ancestors with the starting profile up to 12 generations back",
+            "cousin through shared ancestors",
             ["Ireland"],
         ]
     );
     assert.equal(build("cousin", [99], 3), undefined, "a profile WikiTree did not return is skipped");
-    const sorted = groupRecords([cousin, old, gran, build("descendant", [10])]).map((g) => g.key);
-    assert.deepEqual(sorted, ["anc", "desc", "g9", "anc-far"]);
+    const sorted = groupRecords([cousin, gran, build("descendant", [10])]).map((g) => g.key);
+    assert.deepEqual(sorted, ["anc", "desc", "cousins"]);
 });
 
 test("rate limits are recognised and never drop notables silently", async () => {
@@ -493,6 +511,7 @@ test("rate limits are recognised and never drop notables silently", async () => 
 import {
     fetchAllNotableIds,
     resetAllNotableIds,
+    resetPlusDataDate,
     notablesInCc7,
     withRetry,
     isNetworkError,
@@ -501,8 +520,10 @@ import {
 
 test("fetchAllNotableIds pages through every notable profile and asks only once", async () => {
     resetAllNotableIds();
+    resetPlusDataDate();
     const urls = [];
     const fetchFn = async (u) => {
+        if (u.includes("DataDates.json")) return { ok: true, json: async () => ({ dataDate: "2026-11-08" }) };
         urls.push(u);
         const index = Number(/PageIdx=(\d+)/.exec(u)[1]);
         const profiles = index === 0 ? Array.from({ length: 100000 }, (_, i) => i + 1) : [200001, 200002];
@@ -575,12 +596,19 @@ test("withRetry tries again when the connection drops, but not for other errors"
 });
 
 test("the direct line groups are the ancestor and descendant groups", () => {
-    assert.deepEqual([...DIRECT_LINE_GROUPS].sort(), ["anc", "anc-far", "desc"]);
+    assert.deepEqual([...DIRECT_LINE_GROUPS].sort(), ["anc", "desc"]);
 });
 
 // ---------- 0.2.0: birth and adoptive parents ----------
 
-import { parentOptions, chosenParents, ancestorsFrom, notableAncestorsQuery } from "../notable_data.js";
+import {
+    parentOptions,
+    chosenParents,
+    ancestorsFrom,
+    relativesQuery,
+    couplesOf,
+    onePartnerPerCouple,
+} from "../notable_data.js";
 
 test("parentOptions matches the Genealogy Report: birth parents fall back to the listed ones", () => {
     // Wright-33630: adoptive father listed, birth father recorded, mother the same.
@@ -621,16 +649,13 @@ test("ancestorsFrom keeps only the chosen side, through listed and birth parents
     assert.deepEqual([...ancestorsFrom(tree, [40, 21]).keys()].sort(), [21, 22, 40, 41]);
 });
 
-test("notableAncestorsQuery asks from the chosen parents, by numeric id, with each parent itself", () => {
-    assert.equal(notableAncestorsQuery(1, null, new Map()), "Ancestors=1 NotableProfile");
-    const ancestors = new Map([
-        [50, { id: 50, name: "Söderblom-7" }],
-        [21, { id: 21, name: "" }],
-    ]);
+test("relativesQuery is one descendants search, by numeric id", () => {
+    // No Format parameter is needed: ".json" in the address says it.
     assert.equal(
-        notableAncestorsQuery(1, [50, 21], ancestors),
-        'Ancestors=50 NotableProfile OR WikiTreeID="Söderblom-7" NotableProfile OR Ancestors=21 NotableProfile'
+        relativesQuery(41379356, null, [41379356, 48670305]),
+        'descendants="41379356,48670305" NotableProfile'
     );
+    assert.equal(relativesQuery(1, [], []), "", "nothing to ask: an empty query, which is never sent");
 });
 
 test("searchAncestral with Biological searches only the birth parents' side", async () => {
@@ -653,11 +678,16 @@ test("searchAncestral with Biological searches only the birth parents' side", as
         return { ok: true, json: async () => ({ response: { profiles: [] } }) };
     };
     const bio = chosenParents(parentOptions({ Father: 40, Mother: 21, BioFather: 50 }), "bio");
-    const result = await searchAncestral({ rootId: 1, generations: 2, parentIds: bio, api, fetchFn });
+    const result = await searchAncestral({
+        rootId: 1,
+        generations: 2,
+        parentIds: bio,
+        api: tooBigForOneCall(api),
+        fetchFn,
+    });
     assert.deepEqual([...result.ancestors.keys()].sort(), [21, 50]);
-    assert.ok(asked[0].startsWith("Ancestors=50 NotableProfile OR "), asked[0]);
+    assert.deepEqual(asked, ['descendants="50,21" NotableProfile']);
     assert.ok(!asked.some((q) => /\b40\b/.test(q)), "the adoptive father is not searched");
-    assert.ok(asked.includes("Descendants=50 NotableProfile OR Descendants=21 NotableProfile"));
 });
 
 // ---------- private starting profiles ----------
@@ -763,13 +793,50 @@ test("untilAborted rejects on abort without waiting for the work", async () => {
     await assert.rejects(p, { name: "AbortError" });
 });
 
-test("descendantsQueries puts at most 20 ancestors in one WikiTree+ request", () => {
-    const ids = Array.from({ length: 45 }, (_, i) => i + 1);
-    const queries = descendantsQueries(ids);
-    assert.deepEqual(
-        queries.map((q) => q.split(" OR ").length),
-        [20, 20, 5]
-    );
+test("only one partner of each couple is asked about", () => {
+    // 1206231 and 19671599 are a couple: they share their descendants.
+    const people = [{ father: 1206231, mother: 19671599, bioFather: 0, bioMother: 0 }];
+    const couples = couplesOf(people);
+    assert.deepEqual(onePartnerPerCouple([1206231, 19671599, 77], couples), [1206231, 77]);
+    // A father with two wives who are both ancestors (pedigree collapse) covers both.
+    const two = couplesOf([
+        { father: 5, mother: 6, bioFather: 0, bioMother: 0 },
+        { father: 5, mother: 7, bioFather: 0, bioMother: 0 },
+    ]);
+    assert.deepEqual(onePartnerPerCouple([5, 6, 7], two), [5]);
+    // The starting profile's own parents come in as extra pairs.
+    assert.deepEqual(onePartnerPerCouple([40, 21], couplesOf([], [[40, 21]])), [40]);
+    // Someone whose partner is not in this generation is kept.
+    assert.deepEqual(onePartnerPerCouple([6], two), [6]);
+});
+
+test("the one search names one partner of each couple at the top of each line", async () => {
+    // 2 and 3 are the parents (a couple); 4 and 5 are 2's parents (a couple); 3's parents are unknown.
+    const pages = {
+        1: { 2: person(2, 1, { Father: 4, Mother: 5 }), 3: person(3, 1) },
+        2: { 4: person(4, 2), 5: person(5, 2) },
+        3: {},
+    };
+    const api = async (data) => [{ status: "", people: data.ancestors ? pages[data.ancestors] || {} : {} }];
+    const asked = [];
+    const fetchFn = async (url) => {
+        asked.push(decodeURIComponent(/Query=([^&]*)/.exec(url)[1]));
+        return json({ response: { profiles: [] } });
+    };
+    await searchAncestral({ rootId: 1, generations: 3, rootCouples: [[2, 3]], api: tooBigForOneCall(api), fetchFn });
+    // 3 stays (its line ends there); 4 stands for the couple 4 and 5; 2 is covered by 4.
+    assert.deepEqual(asked, ['descendants="3,4" NotableProfile']);
+});
+
+test("without ancestors, the starting profile's own descendants are searched", async () => {
+    const api = async () => [{ status: "", people: {} }];
+    const asked = [];
+    const fetchFn = async (url) => {
+        asked.push(decodeURIComponent(/Query=([^&]*)/.exec(url)[1]));
+        return json({ response: { profiles: [] } });
+    };
+    await searchAncestral({ rootId: 1, generations: 3, api, fetchFn });
+    assert.deepEqual(asked, ['descendants="1" NotableProfile']);
 });
 
 test("private placeholders are left out but do not end the walk", async () => {
@@ -850,4 +917,369 @@ test("WikiTree+ dropping the query counts as a refusal", async () => {
     await assert.rejects(fetchPlusNotableIds(2, { fetchFn }), PlusUnavailableError);
     assert.equal(calls, 1);
     resetPlusQueue();
+});
+
+// ---------- Help:App Policies and Help:WikiTree Plus API ----------
+
+import { pacedApi, isSavedCurrent, savedRecord, refreshRecords, fetchPlusDataDate } from "../notable_data.js";
+
+test("pacedApi keeps WikiTree API requests at least the spacing apart", async () => {
+    const times = [];
+    const api = pacedApi(async () => times.push(Date.now()), 30);
+    await Promise.all([api({}), api({}), api({})]);
+    assert.equal(times.length, 3);
+    assert.ok(times[1] - times[0] >= 25 && times[2] - times[1] >= 25, times.join(","));
+});
+
+test("pacedApi drops a waiting request when its search is stopped", async () => {
+    let calls = 0;
+    const api = pacedApi(async () => calls++, 50);
+    await api({});
+    const controller = new AbortController();
+    const waiting = api({}, controller.signal);
+    controller.abort();
+    await assert.rejects(waiting, { name: "AbortError" });
+    assert.equal(calls, 1);
+});
+
+test("a saved result is current only for the same WikiTree+ data date, and never past 8 days", () => {
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const saved = { savedAt: now - 2 * 86400000, dataDate: "2026-11-15" };
+    assert.equal(isSavedCurrent(saved, "2026-11-15", now), true);
+    assert.equal(isSavedCurrent(saved, "2026-11-22", now), false, "WikiTree+ has newer data");
+    assert.equal(isSavedCurrent(saved, "", now), true, "date unknown: the age limit decides");
+    assert.equal(isSavedCurrent({ ...saved, savedAt: now - 9 * 86400000 }, "", now), false);
+    assert.equal(isSavedCurrent(null, "2026-11-15", now), false);
+});
+
+test("saved records keep no profile details, and are refreshed from WikiTree", () => {
+    const record = {
+        id: 7,
+        name: "Ada Lovelace",
+        birthPlace: "London, England",
+        categories: ["Mathematicians"],
+        groupKey: "g3",
+        group: 3,
+        relationship: "shares the starting profile's great-grandparents",
+        order: 3,
+    };
+    const kept = savedRecord(record);
+    assert.deepEqual(Object.keys(kept).sort(), ["group", "groupKey", "id", "order", "relationship"]);
+    assert.ok(!JSON.stringify(kept).includes("Lovelace"));
+    const profiles = new Map([[7, { Id: 7, Name: "Byron-9", FirstName: "Ada", LastNameAtBirth: "Byron" }]]);
+    const [fresh] = refreshRecords([kept, { id: 8, groupKey: "g3" }], profiles);
+    assert.equal(fresh.wtId, "Byron-9");
+    assert.equal(fresh.name, "Ada Byron");
+    assert.equal(fresh.groupKey, "g3");
+    assert.equal(refreshRecords([{ id: 8 }], profiles).length, 0, "a profile WikiTree no longer returns is left out");
+});
+
+test("fetchPlusDataDate reads /DataDates.json once per page", async () => {
+    resetPlusQueue();
+    resetPlusDataDate();
+    let calls = 0;
+    const fetchFn = async (url) => {
+        calls++;
+        assert.match(url, /plus\.wikitree\.com\/DataDates\.json\?appID=TA-notableRelatives/);
+        return json({ dataDate: "2026-11-15", categoriesDate: "2026-11-18" });
+    };
+    assert.equal(await fetchPlusDataDate({ fetchFn }), "2026-11-15");
+    assert.equal(await fetchPlusDataDate({ fetchFn }), "2026-11-15");
+    assert.equal(calls, 1);
+    resetPlusDataDate();
+});
+
+test("a WikiTree+ answer cut at MaxProfiles makes the search partial", async () => {
+    resetPlusQueue();
+    const api = async (data) => [{ status: "", people: data.ancestors === 1 ? { 2: person(2, 1) } : {} }];
+    const fetchFn = async (url) =>
+        json({ response: { found: 100000, more: url.includes("descendants"), profiles: [] } });
+    const result = await searchAncestral({ rootId: 1, generations: 2, api, fetchFn });
+    assert.equal(result.isPartial, true);
+});
+
+// ---------- pauses and empty searches ----------
+
+import { fetchPlusIds, plusUnavailableMessage, clearPlusPause, plusPause } from "../notable_data.js";
+
+test("an empty search is never sent to WikiTree+", async () => {
+    resetPlusQueue();
+    let calls = 0;
+    const fetchFn = async () => {
+        calls++;
+        return json({ request: { query: "" }, response: { error: "No search text." } });
+    };
+    assert.deepEqual(await fetchPlusIds("", { fetchFn }), { ids: [], dataDate: "", isCut: false });
+    // Biological chosen while both birth parents are private: no parents to ask about, so no query at all.
+    assert.deepEqual(await fetchPlusIds(relativesQuery(1, [], []), { fetchFn }), {
+        ids: [],
+        dataDate: "",
+        isCut: false,
+    });
+    assert.equal(calls, 0);
+    assert.equal(plusPause(), null, "no pause starts");
+});
+
+test("a pause says no search was sent, and Try now ends it", async () => {
+    resetPlusQueue();
+    let calls = 0;
+    const refuse = async () => {
+        calls++;
+        return { ok: false, status: 429 };
+    };
+    const ok = async () => {
+        calls++;
+        return json({ response: { profiles: [5] } });
+    };
+    const first = await fetchPlusNotableIds(1, { fetchFn: refuse }).catch((e) => e);
+    assert.equal(first.isPause, false);
+    assert.match(plusUnavailableMessage(first), /turned away this search/);
+    assert.match(plusUnavailableMessage(first), /too many requests/, "names what WikiTree+ answered");
+    assert.match(plusUnavailableMessage(first), /Try WikiTree\+ now/);
+
+    const second = await fetchPlusNotableIds(2, { fetchFn: ok }).catch((e) => e);
+    assert.equal(second.isPause, true);
+    assert.equal(calls, 1, "nothing sent during the pause");
+    assert.match(plusUnavailableMessage(second), /No search was sent to WikiTree\+/);
+    assert.ok(second.until > second.at);
+
+    clearPlusPause();
+    assert.deepEqual((await fetchPlusNotableIds(3, { fetchFn: ok })).ids, [5]);
+    resetPlusQueue();
+});
+
+test("WikiTree+ addresses carry no Format parameter", () => {
+    const url = plusSearchUrl('ancestors="1" NotableProfile');
+    assert.ok(!/format=/i.test(url), url);
+    assert.match(url, /\/WTWebProfileSearch\/TA-notableRelatives\.json\?Query=/);
+});
+
+// ---------- one WikiTree API call ----------
+
+import { fetchFamily, descendantIdsOf, fetchInOneCall } from "../notable_data.js";
+
+test("fetchFamily gets the profile, its ancestors and its descendants in ONE call", async () => {
+    const calls = [];
+    const api = async (data) => {
+        calls.push(data);
+        return [
+            {
+                status: "",
+                resultByKey: { 1: { Id: 1 } },
+                people: {
+                    1: person(1, 0, { Father: 2, Mother: 3, FirstName: "Me" }),
+                    2: person(2, 1, { Father: 4 }),
+                    3: person(3, 1),
+                    4: person(4, 2),
+                    10: person(10, 1, { Father: 1 }),
+                    11: person(11, 2, { Mother: 10 }),
+                },
+            },
+        ];
+    };
+    const fam = await fetchFamily(1, 8, { api });
+    assert.equal(calls.length, 1, "a single call");
+    assert.deepEqual([calls[0].ancestors, calls[0].descendants, calls[0].minGeneration], [8, 10, undefined]);
+    assert.equal(fam.root.FirstName, "Me");
+    assert.deepEqual([...fam.ancestors.keys()].sort(), [2, 3, 4]);
+    assert.deepEqual([...fam.descendants.keys()].sort(), [10, 11]);
+    assert.equal(fam.ancestors.get(4).degree, 2);
+    assert.equal(fam.descendants.get(11).degree, 2);
+});
+
+test("fetchFamily falls back to a generation walk when the family is too big for one call", async () => {
+    const asked = [];
+    const api = async (data) => {
+        asked.push(data.minGeneration === undefined ? (data.ancestors ? "one" : "root") : `gen${data.ancestors}`);
+        if (data.minGeneration === undefined && data.ancestors) return [{ status: MAX, people: {} }];
+        if (!data.ancestors) return [{ status: "", people: { 1: person(1, 0) } }];
+        return [{ status: "", people: data.ancestors === 1 ? { 2: person(2, 1) } : {} }];
+    };
+    const fam = await fetchFamily(1, 3, { api });
+    assert.deepEqual(asked, ["one", "root", "gen1", "gen2"]);
+    assert.deepEqual([...fam.ancestors.keys()], [2]);
+    assert.equal(fam.descendants, null, "descendants are asked for later, only if needed");
+});
+
+test("descendantIdsOf follows parent links down, birth parents included", () => {
+    const people = [
+        { Id: 10, Father: 1 },
+        { Id: 11, Mother: 10 },
+        { Id: 12, BioFather: 11 },
+        { Id: 2, Father: 4 },
+    ];
+    assert.deepEqual([...descendantIdsOf(1, people)].sort(), [10, 11, 12]);
+});
+
+test("fetchInOneCall reports a private starting profile", async () => {
+    const api = async () => [
+        {
+            status: "",
+            resultByKey: { 7: { Id: 7, status: "Ancestor/Descendant permission denied." } },
+            people: { "-1": { Id: -1 } },
+        },
+    ];
+    await assert.rejects(fetchInOneCall(7, { ancestors: 3 }, { api }), { name: "PrivateProfileError" });
+});
+
+// ---------- what to find ----------
+
+test("relativesQuery asks only what was chosen", () => {
+    assert.equal(relativesQuery(1, null, [3, 4], "ancestors"), 'ancestors="1" NotableProfile');
+    assert.equal(relativesQuery(1, [50, 21], [3, 4], "ancestors"), 'ancestors="50,21" NotableProfile');
+    assert.equal(relativesQuery(1, null, [3, 4], "relatives"), 'descendants="3,4" NotableProfile');
+    assert.equal(relativesQuery(1, null, [3, 4], "all"), 'descendants="3,4" NotableProfile');
+});
+
+test("ancestors only: one call without descendants, and only ancestors within the chosen generations", async () => {
+    const calls = [];
+    const api = async (data) => {
+        calls.push(data);
+        return [{ status: "", resultByKey: {}, people: { 1: person(1, 0), 2: person(2, 1) } }];
+    };
+    const asked = [];
+    const fetchFn = async (url) => {
+        asked.push(decodeURIComponent(/Query=([^&]*)/.exec(url)[1]));
+        return json({ response: { profiles: [1, 2, 77] } });
+    };
+    const found = [];
+    await searchAncestral({
+        rootId: 1,
+        generations: 3,
+        find: "ancestors",
+        api,
+        fetchFn,
+        onFound: (f) => found.push([f.kind, f.ids]),
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].descendants, undefined, "no descendants asked for");
+    assert.deepEqual(asked, ['ancestors="1" NotableProfile']);
+    assert.deepEqual(found, [["ancestor", [2]]], "77, further back than the chosen generations, is left out");
+});
+
+test("descendants and cousins only: the nearer ancestors in the answer are left out", async () => {
+    const api = async () => [
+        {
+            status: "",
+            resultByKey: {},
+            people: { 1: person(1, 0, { Father: 2 }), 2: person(2, 1), 10: person(10, 1, { Father: 1 }) },
+        },
+    ];
+    const asked = [];
+    const fetchFn = async (url) => {
+        asked.push(decodeURIComponent(/Query=([^&]*)/.exec(url)[1]));
+        return json({ response: { profiles: [2, 1, 10, 20] } });
+    };
+    const found = [];
+    await searchAncestral({
+        rootId: 1,
+        generations: 3,
+        find: "relatives",
+        api,
+        fetchFn,
+        onFound: (f) => found.push([f.kind, f.ids]),
+    });
+    assert.deepEqual(asked, ['descendants="2" NotableProfile']);
+    assert.deepEqual(found, [
+        ["descendant", [10]],
+        ["cousin", [20]],
+    ]);
+});
+
+// ---------- Relationship or Connection ----------
+
+import { finderLink } from "../notable_data.js";
+
+test("blood relatives link to the Relationship Finder, relatives by marriage to the Connection Finder", () => {
+    const blood = finderLink("Palotay-1", "Kronberger-1", true);
+    assert.equal(blood.label, "Relationship");
+    assert.equal(
+        blood.url,
+        "https://www.wikitree.com/index.php?title=Special:Relationship&action=calculate" +
+            "&person1Name=Palotay-1&person2Name=Kronberger-1"
+    );
+    const marriage = finderLink("Palotay-1", "Szent-Györgyi-5", false, { root: "J Palotay", other: "Albert" });
+    assert.equal(marriage.label, "Connection");
+    assert.equal(
+        marriage.url,
+        "https://www.wikitree.com/index.php?title=Special:Connection&action=connect" +
+            "&person1Name=Palotay-1&person2Name=Szent-Gy%C3%B6rgyi-5"
+    );
+    assert.match(marriage.title, /Connection Finder for J Palotay and Albert, which follows marriages too/);
+});
+
+// ---------- logged in, but the profile still comes back private ----------
+
+import { checkAppsLogin } from "../notable_data.js";
+
+test("your own private profile never sends you to your own Trusted List", () => {
+    const msg = privateProfileMessage("Raitt-92", { isLoggedIn: true, name: "Raitt-92", login: "ok" });
+    assert.match(msg, /this is your own profile/);
+    assert.match(msg, /Logout.*Apps Login/);
+    assert.doesNotMatch(msg, /Trusted List/);
+    // Spaces and case in the WikiTree ID do not matter.
+    assert.match(privateProfileMessage("van Dyke-1", { isLoggedIn: true, name: "Van_Dyke-1" }), /your own profile/);
+});
+
+test("an expired Apps Login is named as the cause", () => {
+    const msg = privateProfileMessage("Raitt-92", { isLoggedIn: true, name: "Raitt-92", login: "expired" });
+    assert.match(msg, /no longer recognizes that login/);
+    assert.match(msg, /Apps Login/);
+    assert.doesNotMatch(msg, /Trusted List/);
+});
+
+test("checkAppsLogin asks the API's checkLogin", async () => {
+    const asked = [];
+    const answer = (result) => async (data) => {
+        asked.push(data);
+        return { clientLogin: { checkLogin: data.checkLogin, result } };
+    };
+    assert.equal(await checkAppsLogin(456, { api: answer("ok") }), "ok");
+    assert.equal(await checkAppsLogin(456, { api: answer("error") }), "expired");
+    assert.deepEqual([asked[0].action, asked[0].checkLogin], ["clientLogin", 456]);
+    assert.equal(await checkAppsLogin(456, { api: async () => ({}) }), "unknown");
+    assert.equal(
+        await checkAppsLogin(456, {
+            api: async () => {
+                throw new TypeError("Failed to fetch");
+            },
+        }),
+        "unknown"
+    );
+    assert.equal(await checkAppsLogin(null, { api: answer("ok") }), "unknown");
+});
+
+test("a refusal rests the app for 5 minutes, not longer", async () => {
+    resetPlusQueue();
+    const before = Date.now();
+    const err = await fetchPlusNotableIds(1, { fetchFn: async () => ({ ok: false, status: 429 }) }).catch((e) => e);
+    assert.ok(err.until - before <= 5 * 60 * 1000 + 1000 && err.until - before >= 5 * 60 * 1000 - 1000);
+    resetPlusQueue();
+});
+
+// ---------- exact relationship on cousin cards ----------
+
+import { fetchCousinRelationship } from "../notable_data.js";
+
+test("a cousin's exact relationship comes from the path through a common ancestor", async () => {
+    // Peasley-222 and Hammon-668: up 5 generations to the shared ancestor, then down 3.
+    const asked = [];
+    const api = async (data) => {
+        asked.push(data);
+        const steps = ["parent", "parent", "parent", "parent", "parent", "child", "child", "child"];
+        return [{ status: "", path: [{ Name: "Peasley-222" }, ...steps.map((pathType) => ({ pathType }))] }];
+    };
+    assert.equal(
+        await fetchCousinRelationship("Peasley-222", "Hammon-668", "Male", { api }),
+        "2nd cousin twice removed"
+    );
+    assert.equal(asked[0].relation, 2, "shortest path through a common ancestor");
+    assert.equal(asked[0].keys, "Peasley-222,Hammon-668");
+});
+
+test("no path, or one through a marriage, keeps the general label", async () => {
+    const none = async () => [{ status: "", path: [] }];
+    assert.equal(await fetchCousinRelationship("A-1", "B-2", "Female", { api: none }), null);
+    const marriage = async () => [{ status: "", path: [{}, { pathType: "spouse" }, { pathType: "parent" }] }];
+    assert.equal(await fetchCousinRelationship("A-1", "B-2", "Female", { api: marriage }), null);
 });

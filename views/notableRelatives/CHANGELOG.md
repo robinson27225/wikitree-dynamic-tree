@@ -5,7 +5,64 @@ to the author's profile and the Help page. To release: change `VERSION` in `nota
 test checks they agree), then upload. A fix raises the last number, a new feature the middle one. Documentation-only
 changes (README, Space page drafts) don't get a new version.
 
-## 0.2.0 (Not yet released)
+## 0.3.1 (Not yet released)
+
+Fixes and a request from testing 0.3.0.
+
+-   **Cousin cards show the exact relationship**, such as "2nd cousin twice removed", instead of "cousin through
+    shared ancestors" (requested by Azure Robinson). It comes from WikiTree's shortest path through a common
+    ancestor, as the Relationship Finder counts it, one paced WikiTree call per card on screen, and is saved with the
+    result. A cousin whose path WikiTree cannot show (for example through a private profile) keeps the general label.
+-   **Logged in, but your own private profile still came back private.** The Tree Apps showed "Logged into Apps"
+    from a cookie on the Apps site even after WikiTree's own login had run out, so WikiTree treated the search as
+    logged out. The Tree Apps now confirm the login with the API's `checkLogin` and show the Apps Login button again
+    when it has run out (shared with all Tree Apps). Notable Relatives checks too before explaining a private
+    profile, and never tells you to add yourself to your own Trusted List. Reported by Raitt-92.
+-   **A search that cannot finish now says why in the results area**, not only in the red bar at the top of the page,
+    which was easy to miss, so it looked as if the search just stopped without a count. Reported by James Wall
+    (Wall-6242).
+-   **When WikiTree+ turns a search away, the message says what it answered** (for example "too many requests",
+    which usually means it is busy) and offers **Try WikiTree+ now** straight away. The rest after a refusal is now
+    5 minutes instead of 15.
+
+## 0.3.0 (18 November 2026)
+
+Easier on WikiTree+ (one search per look), a choice of what to find, and more requests from testers.
+
+-   **One WikiTree+ request per search**, `descendants="id,id,..." NotableProfile` (or
+    `ancestors="id" NotableProfile` for ancestors only), instead of a request for each generation. Only the
+    furthest-back ancestors on each line are listed, one partner of each couple, since everyone descended from a
+    child is descended from that child's parents and a couple shares its descendants (suggested by Azure Robinson).
+    Each list includes the people named in it, so the same answer holds the notable ancestors. WikiTree+ addresses
+    no longer carry the old `Format` parameter, and a list too long for a web address is sent by POST.
+-   **One WikiTree API call** gets the starting profile, its ancestors, and its descendants, when they fit in one
+    answer (up to 1,000 relatives, enough for 8 generations in most trees). A bigger family is asked for a generation
+    at a time. "Everyone within 7 degrees" also tries one call first.
+-   **Choose what to find:** ancestors, descendants, and cousins (the default); ancestors only; or descendants and
+    cousins only (requested by Azure Robinson). A narrower choice asks WikiTree+ a smaller question.
+-   **Notable ancestors stay within the chosen generations** (requested by Azure Robinson). The separate
+    "Older ancestors" group is gone.
+-   **Cousins are one group,** "Notable cousins": a single answer cannot say which generation of shared ancestors
+    each cousin comes from. Each card's Relationship link gives the exact relationship.
+-   **Relatives by marriage link to the Connection Finder.** WikiTree's Relationship Finder follows blood lines
+    only, so it came up empty for a notable related by marriage. Those cards now have a **Connection** link to
+    WikiTree's Connection Finder, which follows marriages too; blood relatives keep the **Relationship** link.
+    Suggested by J Palotay (Palotay-1).
+-   **Clearer when WikiTree+ is unavailable.** After WikiTree+ turns a search away, the app gives it a rest for 15
+    minutes. During that rest it now says that no search was sent, when the rest ends, and offers "Try WikiTree+
+    now", instead of an error that looked as if WikiTree+ had just refused. The app also never sends an empty search
+    (for example Biological when both birth parents are private), which WikiTree+ answered with an error that was
+    taken for a refusal.
+-   **Saved results follow WikiTree+'s weekly data:** they are kept until its data changes (checked with its tiny
+    DataDates.json file, and never more than 8 days), instead of a fixed week. Only what WikiTree+ found is saved;
+    names, dates, and places are read again from WikiTree when the result is shown (Help:App Policies). The list of
+    all notable profiles is kept the same way.
+-   **WikiTree API requests are paced** at least 300 ms apart, under the API's limit of 200 a minute per user
+    (Help:App Policies). A WikiTree+ answer cut off at its profile limit now marks the search as incomplete.
+-   **Starting profile lookup** (shared with all Tree Apps): the Tree Apps now check the WikiTree ID with
+    getRelatives instead of getPerson. The messages for an unknown ID are unchanged.
+
+## 0.2.0 (18 November 2026)
 
 Fixes and requests from the first testers on G2G.
 

@@ -3,8 +3,8 @@
  *
  * Finds the notable people (profiles with a notable template, found with WikiTree+) related to the starting
  * profile, in one of two ways:
- *   - Shared ancestors (default): notable ancestors, notable descendants, and the notable descendants of each
- *     generation of ancestors up to 15 generations back, grouped by the closest shared ancestors.
+ *   - Shared ancestors (default): notable ancestors, notable descendants, and notable cousins (the notable
+ *     descendants of the ancestors up to 15 generations back), found with a single WikiTree+ search.
  *   - Within 7 degrees: everyone in the CC7, in-laws included, grouped by degree.
  * Filters for category, country, place, marker and name.
  *
@@ -23,12 +23,14 @@ const IDEA_URL =
     "https://www.wikitree.com/g2g/2105562/wikitree-days-saturday-question-could-invent-wikitree-would?show=2105577#a2105577";
 const IDEA_PROFILE = "https://www.wikitree.com/wiki/Ashton-4458";
 const WIKI = "https://www.wikitree.com/wiki/";
-const FILTER_PARAMS = ["mode", "gens", "parents", "group", "cat", "loc", "place", "marker", "q"];
+const FILTER_PARAMS = ["mode", "gens", "find", "parents", "group", "cat", "loc", "place", "marker", "q"];
 const PAGE_SIZE = 60; // cards shown per group before "Show more"
 const GENS_DELAY_MS = 800; // wait for the generations box to settle before searching
-const SAVED_KEY = "notableRelatives:results:v1:";
-const SAVED_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // WikiTree+ data changes weekly
+const SAVED_KEY = "notableRelatives:results:v6:"; // v6: ancestors within the chosen generations; no profile details
 const SAVED_MAX_CHARS = 2_000_000;
+
+// Every WikiTree API request from the page, at least 300 ms apart (the API allows 200 a minute per user).
+const pacedPost = nr.pacedApi((data, signal) => WikiTreeAPI.postToAPI(data, signal));
 
 const esc = (s) =>
     String(s ?? "").replace(
@@ -37,9 +39,6 @@ const esc = (s) =>
     );
 const fmt = (n) => Number(n).toLocaleString();
 const plural = (n, word, words = `${word}s`) => `${fmt(n)} ${n === 1 ? word : words}`;
-const relationshipUrl = (a, b) =>
-    "https://www.wikitree.com/index.php?title=Special:Relationship&action=calculate" +
-    `&person1Name=${encodeURIComponent(a)}&person2Name=${encodeURIComponent(b)}`;
 
 window.NotableRelativesView = class NotableRelativesView extends View {
     // "<Id>|<mode>|<gens>" -> results of a finished search
@@ -49,7 +48,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         return {
             title: "Notable Relatives",
             description:
-                "Notable people related to this profile: notable ancestors, descendants and cousins through shared " +
+                "Notable people related to this profile: notable ancestors, descendants, and cousins through shared " +
                 "ancestors up to 15 generations back, or everyone within 7 degrees. Filter by category and " +
                 "location. Idea by Blake Ashton (Ashton-4458) on G2G.",
             docs: nr.HELP_URL,
@@ -63,6 +62,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         this.mode = params.mode === "cc7" ? "cc7" : "anc";
         this.gens = this.clampGens(params.gens);
         this.parents = nr.PARENT_CHOICES.includes(params.parents) ? params.parents : nr.DEFAULT_PARENTS;
+        this.find = nr.FIND_CHOICES.includes(params.find) ? params.find : nr.DEFAULT_FIND;
         this.filters = this.filtersFromParams(params);
         this.shown = new Map();
 
@@ -83,7 +83,13 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                                     )
                                     .join("")}
                             </select>
-                            generations back</label>
+                            generations back:
+                            <select class="nr-find" aria-label="What to find">
+                                ${nr.FIND_CHOICES.map(
+                                    (f) =>
+                                        `<option value="${f}" ${f === this.find ? "selected" : ""}>${nr.FIND_LABELS[f]}</option>`
+                                ).join("")}
+                            </select></label>
                         <label><input type="radio" name="nr-mode" value="cc7" ${this.mode === "cc7" ? "checked" : ""} />
                             Everyone within 7 degrees (includes in-laws)</label>
                         <button type="button" class="small button nr-stop hidden">Stop</button>
@@ -98,9 +104,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                     Notable profiles are those WikiTree+ lists with a notable template
                     (<a href="https://www.wikitree.com/wiki/Template:Notability" target="_blank">Notability</a>,
                     <a href="https://www.wikitree.com/wiki/Project:Notables" target="_blank">Notables Sticker</a>
-                    and others). <strong>Shared ancestors</strong> groups each notable by the nearest generation of
-                    ancestors they descend from; open <em>Relationship</em> on a card for the exact relationship.
-                    <strong>Within 7 degrees</strong> counts steps through parents, children, siblings and spouses.
+                    and others). <strong>Shared ancestors</strong> lists notable ancestors, descendants, and cousins; open
+                    <em>Relationship</em> on a card for the exact relationship.
+                    <strong>Within 7 degrees</strong> counts steps through parents, children, siblings, and spouses.
                     Use <em>Apps Login</em> to follow links through private profiles.<br />
                     Idea by <a href="${IDEA_PROFILE}" target="_blank">Blake Ashton (Ashton-4458)</a>
                     on <a href="${IDEA_URL}" target="_blank">G2G</a>, inspired by Relative Finder.
@@ -122,6 +128,10 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             const gens = this.clampGens(e.target.value);
             this.gensTimer = setTimeout(() => this.switchMode("anc", gens), GENS_DELAY_MS);
         });
+        $c.find(".nr-find").on("change", (e) => {
+            this.find = nr.FIND_CHOICES.includes(e.target.value) ? e.target.value : nr.DEFAULT_FIND;
+            this.switchMode("anc", this.gens);
+        });
         $c.find(".nr-stop").on("click", () => this.stop());
         this.start();
     }
@@ -138,7 +148,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     }
 
     cacheKey() {
-        return `${this.personId}|${this.mode}|${this.mode === "anc" ? `${this.gens}|${this.parents}` : ""}`;
+        return `${this.personId}|${this.mode}|${this.mode === "anc" ? `${this.gens}|${this.parents}|${this.find}` : ""}`;
     }
 
     // Biological / Adoptive / Both, as in the Genealogy Report, shown only when the starting profile has birth parents
@@ -186,6 +196,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
 
     start() {
         this.controller?.abort();
+        this.relationshipQueue = [];
         this.controller = new AbortController();
         this.isStopping = false;
         this.shown = new Map();
@@ -195,11 +206,10 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         wtViewRegistry.clearStatus();
 
         const signal = this.controller.signal;
-        const cached = NotableRelativesView.cache.get(this.cacheKey()) || this.readSaved();
+        const cached = NotableRelativesView.cache.get(this.cacheKey());
         if (cached) {
             this.data = cached;
             this.root = cached.root;
-            NotableRelativesView.cache.set(this.cacheKey(), cached);
             this.renderParentChoice();
             this.showStop(false);
             this.showResults();
@@ -208,7 +218,8 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             }
             return;
         }
-        const load = this.mode === "cc7" ? this.loadCc7(signal) : this.loadAncestral(signal);
+        const saved = this.readSaved();
+        const load = saved ? this.loadSaved(saved, signal) : this.search(signal);
         load.catch((err) => {
             if (err?.name === "AbortError" || signal.aborted) {
                 // Stopped before anything was found (a stop later is handled by the search itself).
@@ -223,8 +234,30 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             this.setProgress("");
             this.setSummary("");
             this.showStop(false);
-            wtViewRegistry.showError(this.errorMessage(err));
+            if (err?.name === "PrivateProfileError") {
+                this.showPrivateProfileMessage(signal);
+                return;
+            }
+            this.showProblem(this.errorMessage(err), { tryNow: err?.name === "PlusUnavailableError" });
         });
+    }
+
+    // A private starting profile: when the page says the reader is logged in, first ask WikiTree whether that login
+    // is still live, so the message is right (an expired login, their own profile, or the Trusted List).
+    async showPrivateProfileMessage(signal) {
+        const user = window.wtViewRegistry?.session?.lm?.user;
+        const isLoggedIn = Boolean(user?.isLoggedIn?.());
+        const wtId = this.root?.wtId || new URLSearchParams(window.location.hash.slice(1)).get("name") || "";
+        let login = "unknown";
+        if (isLoggedIn) {
+            try {
+                login = await nr.checkAppsLogin(user.id, { api: this.api, signal });
+            } catch {
+                return; // a new search started
+            }
+        }
+        if (this.controller?.signal !== signal) return;
+        this.showProblem(nr.privateProfileMessage(wtId, { isLoggedIn, name: user?.name, login }));
     }
 
     errorMessage(err) {
@@ -233,7 +266,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             const wtId = this.root?.wtId || new URLSearchParams(window.location.hash.slice(1)).get("name") || "";
             return nr.privateProfileMessage(wtId, { isLoggedIn: !!user?.isLoggedIn?.(), name: user?.name });
         }
-        if (err?.name === "PlusUnavailableError") return nr.PLUS_UNAVAILABLE_MESSAGE;
+        if (err?.name === "PlusUnavailableError") return nr.plusUnavailableMessage(err);
         if (nr.isLimitError(err)) return nr.LIMIT_MESSAGE;
         if (nr.isNetworkError(err)) return nr.NETWORK_MESSAGE;
         if (nr.isServerError(err))
@@ -241,18 +274,65 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         return err?.message || String(err);
     }
 
+    // A search that could not finish says why in the results area as well as in the red bar at the top of the page,
+    // which is easy to miss, so it never looks as if the app just stopped. After a WikiTree+ refusal, the reader
+    // can ask again straight away (one request).
+    showProblem(message, { tryNow = false } = {}) {
+        wtViewRegistry.showError(message);
+        const results = this.container.querySelector(".nr-results");
+        if (!results) return;
+        results.innerHTML =
+            `<p class="nr-problem" role="alert">${esc(message)}</p>` +
+            (tryNow ? `<button type="button" class="small button nr-try-now">Try WikiTree+ now</button>` : "");
+        results.querySelector(".nr-try-now")?.addEventListener("click", () => {
+            nr.clearPlusPause();
+            this.start();
+        });
+    }
+
     // ---------- results saved in this browser ----------
 
     // A finished search is kept for a week (WikiTree+ data changes weekly), so looking at the same person again asks
     // WikiTree+ nothing. "Search again" forgets it.
+    search(signal) {
+        return this.mode === "cc7" ? this.loadCc7(signal) : this.loadAncestral(signal);
+    }
+
     readSaved() {
         try {
             const saved = JSON.parse(nr.browserStorage()?.getItem(SAVED_KEY + this.cacheKey()) || "null");
-            if (!saved?.data || Date.now() - saved.savedAt > SAVED_MAX_AGE) return null;
-            return { ...saved.data, savedAt: saved.savedAt };
+            return Array.isArray(saved?.data?.records) ? saved : null;
         } catch {
             return null;
         }
+    }
+
+    // A saved result is used only while WikiTree+ is still on the same weekly data. The profile details are read
+    // again from WikiTree (a call or two), since only what WikiTree+ found is kept in the browser.
+    async loadSaved(saved, signal) {
+        this.setSummary("Opening the result saved in this browser…");
+        let dataDate = "";
+        try {
+            dataDate = await nr.untilAborted(nr.fetchPlusDataDate(), signal);
+        } catch (err) {
+            if (err?.name === "AbortError") throw err; // otherwise the age limit decides
+        }
+        if (!nr.isSavedCurrent(saved, dataDate)) {
+            this.forgetSaved();
+            return this.search(signal);
+        }
+        const root = await this.loadRoot(signal);
+        this.renderParentChoice();
+        const ids = saved.data.records.map((r) => r.id);
+        const profiles = ids.length ? await nr.fetchProfiles(ids, { api: this.api, signal }) : new Map();
+        if (this.controller?.signal !== signal) return;
+        const data = { ...saved.data, root, records: nr.refreshRecords(saved.data.records, profiles) };
+        data.savedAt = saved.savedAt;
+        NotableRelativesView.cache.set(this.cacheKey(), data);
+        this.data = data;
+        this.setProgress("");
+        this.showStop(false);
+        this.showResults();
     }
 
     save(data) {
@@ -260,11 +340,21 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         if (!storage) return;
         try {
             for (const key of Object.keys(storage)) {
-                if (!key.startsWith(SAVED_KEY)) continue;
-                const savedAt = JSON.parse(storage.getItem(key) || "{}").savedAt || 0;
-                if (Date.now() - savedAt > SAVED_MAX_AGE) storage.removeItem(key);
+                if (!key.startsWith("notableRelatives:results:")) continue;
+                let old = null;
+                try {
+                    old = JSON.parse(storage.getItem(key) || "null");
+                } catch {
+                    // unreadable: removed below
+                }
+                if (!key.startsWith(SAVED_KEY) || !nr.isSavedCurrent(old, "")) storage.removeItem(key);
             }
-            const text = JSON.stringify({ savedAt: Date.now(), data });
+            const { root, records, savedAt, ...rest } = data; // no profile details: see loadSaved
+            const text = JSON.stringify({
+                savedAt: Date.now(),
+                dataDate: data.dataDate,
+                data: { ...rest, records: records.map(nr.savedRecord) },
+            });
             if (text.length <= SAVED_MAX_CHARS) storage.setItem(SAVED_KEY + this.cacheKey(), text);
         } catch {
             // full or blocked: the results stay for this visit only
@@ -286,7 +376,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     }
 
     api(data, signal) {
-        return WikiTreeAPI.postToAPI(data, signal);
+        return pacedPost(data, signal);
     }
 
     async loadRoot(signal) {
@@ -300,9 +390,13 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             },
             signal
         );
-        // A profile private to the viewer comes back as a placeholder with a negative id and no name.
-        const p = Object.values(result?.[0]?.people || {}).find((x) => Number(x.Id) === this.personId);
-        if (!p?.Name) throw new nr.PrivateProfileError();
+        return this.rootFrom(Object.values(result?.[0]?.people || {}).find((x) => Number(x.Id) === this.personId));
+    }
+
+    // The starting profile as the view keeps it. A profile private to the viewer comes back as a placeholder with a
+    // negative id and no name.
+    rootFrom(p) {
+        if (!p?.Name || Number(p.Id) !== this.personId) throw new nr.PrivateProfileError();
         const name = p?.Derived?.ShortName || [p.FirstName, p.LastNameAtBirth].filter(Boolean).join(" ") || p.Name;
         this.root = { id: this.personId, wtId: p.Name, name, parents: nr.parentOptions(p) };
         return this.root;
@@ -315,18 +409,28 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         const key = this.cacheKey();
         this.setSummary("Looking for notable relatives…");
         this.showStop(true);
-        const root = await this.loadRoot(signal);
+        // ONE WikiTree API call for the starting profile, its ancestors and (unless only ancestors are wanted) its
+        // descendants; a family too big for one answer is asked for a generation at a time.
+        this.setProgress(`Loading the starting profile and ${gens} generations of ancestors…`);
+        const family = await nr.fetchFamily(this.personId, gens, {
+            api: this.api,
+            signal,
+            withDescendants: this.find !== "ancestors",
+            onProgress: (count, generation) =>
+                this.setProgress(`Loading ancestors, generation ${generation} of ${gens}… ${fmt(count)} so far`),
+        });
+        const root = this.rootFrom(family.root);
         this.renderParentChoice();
         this.setSummary(`Looking for notable relatives of ${esc(root.name)}…`);
         const data = {
             mode: "anc",
             gens,
+            find: this.find,
             parents: this.parents,
             root,
             records: [],
             dataDate: "",
-            ancestorCount: 0,
-            searchedTo: 0,
+            ancestorCount: family.ancestors.size,
             isDone: false,
         };
         this.data = data;
@@ -337,17 +441,17 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 this.setProgress(
                     `Loading ancestors, generation ${status.generation} of ${gens}… ${fmt(status.count)} so far`
                 );
-            } else if (status.stage === "notable-ancestors") {
-                this.setProgress(`Found ${plural(data.ancestorCount, "ancestor")}. Looking for notable ancestors…`);
-            } else if (status.stage === "notable-descendants") {
-                this.setProgress("Looking for notable descendants…");
-            } else if (status.stage === "cousins") {
-                data.searchedTo = status.generation - 1;
-                const label = nr.ancestralGroup("cousin", status.generation).groupHeading.replace(/^Shared /, "");
-                const part = status.queries > 1 ? ` (part ${status.query} of ${status.queries})` : "";
+            } else if (status.stage === "relatives") {
+                const what =
+                    status.find === "ancestors"
+                        ? "the notable ancestors"
+                        : `the notable descendants of the furthest-back ${plural(status.count, "ancestor")}`;
                 this.setProgress(
-                    `Searching descendants of the ${label}, generation ${status.generation} of ${gens}${part}…`
+                    `Found ${plural(data.ancestorCount, "ancestor")}. Asking WikiTree+ once for ${what}. ` +
+                        "This can take a minute…"
                 );
+            } else if (status.stage === "descendants") {
+                this.setProgress("Sorting the starting profile's own descendants from cousins…");
             }
         };
 
@@ -357,6 +461,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 rootId: root.id,
                 generations: gens,
                 parentIds: nr.chosenParents(root.parents, this.parents),
+                rootCouples: [root.parents?.main, root.parents?.bio].filter(Boolean),
+                find: this.find,
+                family,
                 api: this.api,
                 signal,
                 onStatus: say,
@@ -379,11 +486,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         }
         this.showStop(false);
         if (result) {
-            data.searchedTo = result.generations;
             data.ancestorCount = result.ancestors.size; // on the chosen parents' side only
             data.dataDate = result.dataDate;
             data.failedQueries = result.failedQueries;
-            data.stoppedAt = result.stoppedAt;
             data.isPartial = result.isPartial;
             data.isDone = true;
             // A stopped or incomplete search is not kept, so it can be run again.
@@ -421,7 +526,12 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         ]).then(([all, cc7Plus]) => {
             plusLine = `WikiTree+ lists ${plural(all.ids.size, "notable profile")} in all.`;
             show();
-            return { all: all.ids, cc7Ids: cc7Plus.ids, dataDate: cc7Plus.dataDate || all.dataDate };
+            return {
+                all: all.ids,
+                cc7Ids: cc7Plus.ids,
+                isCut: cc7Plus.isCut,
+                dataDate: cc7Plus.dataDate || all.dataDate,
+            };
         });
         const cc7Promise = nr
             .fetchCc7(this.personId, {
@@ -452,7 +562,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             root,
             records,
             dataDate: plus.dataDate,
-            isPartial: cc7.isPartial,
+            isPartial: cc7.isPartial || plus.isCut,
             cc7Count: cc7.people.size,
             isDone: true,
         };
@@ -533,11 +643,8 @@ window.NotableRelativesView = class NotableRelativesView extends View {
         if (d.mode === "cc7") {
             this.setSummary(`${count} within 7 degrees of ${rootLink} (out of ${fmt(d.cc7Count)} relatives).${asOf}`);
         } else {
-            const reach = d.isDone
-                ? `up to ${d.gens} generations back`
-                : d.isStopped
-                  ? `up to ${d.searchedTo} generation${d.searchedTo === 1 ? "" : "s"} back`
-                  : "so far";
+            // One WikiTree+ search covers every generation, so a stopped search has only the ancestors found so far.
+            const reach = d.isStopped ? "so far" : `up to ${d.gens} generations back`;
             const stopped = d.isStopped ? "; search stopped" : "";
             const which =
                 d.root.parents?.hasAlternate && d.parents !== "both"
@@ -545,8 +652,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                         ? ", through the birth parents"
                         : ", through the parents listed on the profile"
                     : "";
+            const only = d.find && d.find !== "all" ? ` (${nr.FIND_LABELS[d.find]})` : "";
             this.setSummary(
-                `${count} of ${rootLink} through shared ancestors ${reach}${which}` +
+                `${count} of ${rootLink} through shared ancestors ${reach}${only}${which}` +
                     ` (${plural(d.ancestorCount, "ancestor")} searched${stopped}).${asOf}`
             );
             if (d.isDone || d.isStopped) this.setProgress("");
@@ -555,8 +663,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             wtViewRegistry.showWarning(`${d.problem} The relatives found so far are shown.`);
         } else if (d.failedQueries) {
             wtViewRegistry.showWarning(
-                `WikiTree+ did not answer a search for generation ${d.stoppedAt}, so the search stopped there to ` +
-                    "spare the server. Some relatives may be missing. Please try again later."
+                "WikiTree+ did not answer the search, so no notable relatives could be found. Please try again later."
             );
         } else if (d.isPartial) {
             wtViewRegistry.showWarning(
@@ -638,7 +745,6 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                         ? `<button type="button" class="small button nr-direct" title="Show only notable ancestors and descendants, no cousins">Direct line only</button>`
                         : ""
                 }
-                ${isAnc ? `<span class="nr-groups-hint">Shared ancestors by generation:</span>` : ""}
                 ${f.groups
                     .map(
                         (g) => `
@@ -680,12 +786,6 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 <button type="button" class="small button nr-toggle">Collapse all</button>
             </div>`;
         el.classList.remove("hidden");
-
-        // Put the "generations back" hint after the ancestor and descendant boxes, before the numbers.
-        const hint = el.querySelector(".nr-groups-hint");
-        const firstNumber = [...el.querySelectorAll(".nr-groups input")].find((cb) => /^g\d+$/.test(cb.value));
-        if (hint && firstNumber) firstNumber.closest("label").before(hint);
-        else hint?.remove();
 
         const $el = $(el);
         if ($.fn.select2) {
@@ -793,6 +893,55 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             this.renderResults();
             window.scrollTo(0, y);
         });
+        this.findCousinRelationships(results);
+    }
+
+    // The exact relationship for the cousin cards on screen ("2nd cousin twice removed"), one paced WikiTree API
+    // call each, so only what is shown is looked up (the API allows 200 calls a minute). A card fills in as its
+    // answer arrives; the answers are saved with the result.
+    findCousinRelationships(results) {
+        const data = this.data;
+        if (!data || data.mode !== "anc" || !data.root?.wtId) return;
+        const byId = new Map(data.records.map((r) => [String(r.id), r]));
+        this.relationshipQueue ||= [];
+        const queue = this.relationshipQueue; // a new search starts a new queue (see start)
+        for (const card of results.querySelectorAll(".nr-card")) {
+            const r = byId.get(card.dataset.id);
+            if (!r || r.groupKey !== "cousins" || r.isRelationshipTried || r.isRelationshipQueued || !r.wtId) continue;
+            r.isRelationshipQueued = true;
+            queue.push(r);
+        }
+        if (queue.isRunning || !queue.length) return;
+        queue.isRunning = true;
+        const signal = this.controller?.signal;
+        (async () => {
+            let found = 0;
+            while (queue.length && this.data === data && !signal?.aborted) {
+                const r = queue.shift();
+                try {
+                    const label = await nr.fetchCousinRelationship(data.root.wtId, r.wtId, r.gender, {
+                        api: this.api,
+                        signal,
+                    });
+                    r.isRelationshipTried = true;
+                    if (label) {
+                        r.relationship = label;
+                        found++;
+                        const el = this.container.querySelector(`.nr-card[data-id="${r.id}"] .nr-rel-text`);
+                        if (el) el.textContent = label;
+                    }
+                } catch (err) {
+                    if (err?.name === "AbortError") break;
+                    if (nr.isLimitError(err)) break; // leave the rest as they are; asked again next time
+                    r.isRelationshipTried = true;
+                    console.warn(`Notable Relatives: no relationship for ${r.wtId}`, err);
+                }
+            }
+            for (const r of queue) r.isRelationshipQueued = false;
+            queue.length = 0;
+            queue.isRunning = false;
+            if (found && this.data === data && data.isDone && !data.isPartial && !data.failedQueries) this.save(data);
+        })();
     }
 
     pickFromCard(key, value) {
@@ -829,17 +978,19 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             more ? `<span class="nr-more" title="${esc(r.categories.slice(4).join("\n"))}">+${more} more</span>` : "",
         ].join("");
         const root = this.data.root;
+        // Related by marriage: the Relationship Finder would come up empty, so the Connection Finder instead.
+        const finder = nr.finderLink(root.wtId, r.wtId, r.isBlood, { root: root.name, other: r.name });
         const relLink =
             r.wtId && r.id !== root.id
-                ? ` · <a class="nr-rel-link" href="${relationshipUrl(root.wtId, r.wtId)}" target="_blank"
-                    title="WikiTree's Relationship Finder for ${esc(root.name)} and ${esc(r.name)}">Relationship</a>`
+                ? ` · <a class="nr-rel-link" href="${esc(finder.url)}" target="_blank"
+                    title="${esc(finder.title)}">${finder.label}</a>`
                 : "";
         return `
-            <article class="nr-card">
+            <article class="nr-card" data-id="${esc(r.id)}">
                 ${photo}
                 <div class="nr-card-body">
                     <a class="nr-name" href="${url}" target="_blank" title="${esc(r.longName || r.name)}">${esc(r.name)}</a>
-                    <div class="nr-rel${r.isBlood ? "" : " nr-rel-marriage"}">${esc(r.relationship)}${relLink}</div>
+                    <div class="nr-rel${r.isBlood ? "" : " nr-rel-marriage"}"><span class="nr-rel-text">${esc(r.relationship)}</span>${relLink}</div>
                     ${life ? `<div class="nr-life">${life}</div>` : ""}
                     <div class="nr-chips">${chips}</div>
                 </div>
@@ -885,6 +1036,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             mode: this.mode === "cc7" ? "cc7" : "",
             gens: this.mode === "anc" && this.gens !== nr.DEFAULT_GENERATIONS ? String(this.gens) : "",
             parents: this.mode === "anc" && this.parents !== nr.DEFAULT_PARENTS ? this.parents : "",
+            find: this.mode === "anc" && this.find !== nr.DEFAULT_FIND ? this.find : "",
             group: [...f.groups].join(","),
             cat: f.category,
             loc: f.country,

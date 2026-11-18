@@ -178,7 +178,7 @@ window.ViewRegistry = class ViewRegistry {
     }
 
     // When the "Go" button is clicked, grab the provided WikiTree ID and the selected View.
-    // Currently we call getPerson() at the API to see that the provided ID is valid, and then launch the view.
+    // Currently we call getRelatives() at the API to see that the provided ID is valid, and then launch the view.
     // Possibly this should be changed/removed. Different views require different incoming data, and some are just using the ID
     // and then immediately recalling getPerson() on that ID, which is a waste.
     onSubmit(e) {
@@ -225,18 +225,34 @@ window.ViewRegistry = class ViewRegistry {
         const basicFields = ["Id", "Name", "FirstName", "LastName", "Derived.BirthName", "Derived.BirthNamePrivate"];
 
         try {
+            // getRelatives (with no relatives asked for) instead of getPerson: same profile fields, and it names the
+            // profile (user_name) even when it is private to the viewer.
             WikiTreeAPI.postToAPI({
                 appId: "ViewRegistry",
-                action: "getPerson",
-                key: wtID,
+                action: "getRelatives",
+                keys: wtID,
                 fields: basicFields.join(),
-            }).then((data) => this.onPersonDataReceived(view, data, filteredParams));
+            })
+                .then((data) => this.onPersonDataReceived(view, this.personResultFromRelatives(data), filteredParams))
+                .catch((err) => {
+                    console.error("Could not look up the starting profile:", err);
+                    this.showError(`An unexpected error occurred: ${err.message}. Refreshing the page might help.`);
+                });
         } finally {
             viewLoader.classList.add("hidden");
         }
     }
 
-    // After the initial getPerson from the onSubmit() launch returns, this method is called.
+    // The getRelatives answer in the shape onPersonDataReceived() expects from getPerson: [{ person, status }], or
+    // [{ status: "Invalid user" }] when no profile matched (getRelatives then returns no items and status 0).
+    personResultFromRelatives(data) {
+        const answer = data?.[0] || {};
+        const item = answer.items?.[0];
+        if (item?.person) return [{ person: item.person, status: 0 }];
+        return [{ status: answer.status || "Invalid user" }];
+    }
+
+    // After the initial getRelatives from the onSubmit() launch returns, this method is called.
     onPersonDataReceived(view, data, filteredParams) {
         const wtID = this.getCurrentWtId();
         const infoPanel = document.querySelector(this.INFO_PANEL);
@@ -413,6 +429,7 @@ window.LoginManager = class LoginManager {
 
         if (this.user.isLoggedIn()) {
             this.events?.onLoggedIn(this.user);
+            this.confirmLogin();
         } else if (authcode) {
             // user is not logged in yet, but we've received authcode
             // An appId is needed: the API answers requests without one with "Limit exceeded." (HTTP 429).
@@ -427,6 +444,29 @@ window.LoginManager = class LoginManager {
         } else {
             this.events?.onUnlogged();
         }
+    }
+
+    // The login saved on this site can outlive WikiTree's own (at api.wikitree.com). Then the page says "Logged into
+    // Apps" while the API treats every request as logged out, and private profiles, even the reader's own, stay
+    // hidden. The API's checkLogin says whether the login is still live (wikitree-api, authentication.md, "Checking
+    // Login Status"); if not, show the Apps Login button again. Checked after the view starts, so it is not delayed.
+    confirmLogin() {
+        this.wtAPI
+            .postToAPI({ appId: "LoginManager", action: "clientLogin", checkLogin: this.user.id })
+            .then((data) => {
+                if (data?.clientLogin?.result !== "error") return; // "ok", or an answer we do not know: leave it
+                this.forgetLogin();
+                this.events?.onUnlogged({ loginFailed: true }); // no automatic re-login, so no loop
+            })
+            .catch((err) => console.warn("Could not check the Apps Login:", err)); // offline: leave it
+    }
+
+    // Forgets the saved login on this site only (WikiTree has already ended it).
+    forgetLogin() {
+        this.wtAPI.cookie(this.C_WT_USERNAME, "", { path: "/", expires: new Date("Thu, 01 Jan 1970 00:00:01 GMT") });
+        this.wtAPI.cookie(this.C_WT_USER_ID, "", { path: "/", expires: new Date("Thu, 01 Jan 1970 00:00:01 GMT") });
+        this.user.name = null;
+        this.user.id = null;
     }
 
     logout() {
