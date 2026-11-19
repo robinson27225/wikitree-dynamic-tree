@@ -76,7 +76,8 @@ page. How it was made: `images/logo.brief.md`.
 
 The app is uploaded from its own folder, `~/code/notable-relatives`, the same way as `~/code/genealogy-report`. That
 folder is the whole Tree Apps site (the view needs `tree.js`, `WikiTreeAPI.js`, `index.html` and `index.js`) with this
-view and its drafts (`views/notableRelatives/docs/`: the Space page markup, the G2G post, and the Space page images).
+view. Drafts (the Space page markup, the G2G post, and the Space page images) are kept outside the repo and the upload
+folder, in `~/code/docs/notable-relatives/`.
 The code and tests live in the git repo, `~/code/wikitree-dynamic-tree` (branch `notableRelatives`).
 
 1. After changing the code in the repo, refresh the folder (the tests stay in the repo):
@@ -87,7 +88,6 @@ The code and tests live in the git repo, `~/code/wikitree-dynamic-tree` (branch 
     ```
 
 2. Upload the contents of `~/code/notable-relatives/` to `apps/robinson27225/notable-relatives/` on the Apps server
-   (see [Help:WikiTree Apps Server](https://www.wikitree.com/wiki/Help:WikiTree_Apps_Server)). The
-   `views/notableRelatives/docs/` folder holds drafts and does not need to be uploaded.
+   (see [Help:WikiTree Apps Server](https://www.wikitree.com/wiki/Help:WikiTree_Apps_Server)).
 3. Open `https://apps.wikitree.com/apps/robinson27225/notable-relatives/index.html#view=notableRelatives`, enter a
    WikiTree ID, and click GO. Hard-refresh if the version at the bottom is not the one you uploaded.

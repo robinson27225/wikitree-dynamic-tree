@@ -24,7 +24,7 @@ import { parentGraph, relationshipNamer, relationshipFromSteps, describeRelation
 
 // Semantic version (major.minor.patch), 0.x while the app is in beta. Raise it with every upload and add an entry to
 // CHANGELOG.md; a test checks the two agree. A fix raises the last number, a new feature the middle one.
-export const VERSION = "0.3.1";
+export const VERSION = "0.3.3";
 export const AUTHOR_ID = "Robinson-27225";
 export const AUTHOR_URL = `https://www.wikitree.com/wiki/${AUTHOR_ID}`;
 export const HELP_URL = "https://www.wikitree.com/wiki/Space:Notable_Relatives";
@@ -41,6 +41,13 @@ const PROFILE_CHUNK = 1000;
 // A search longer than this many encoded characters is sent by POST, which WikiTree+ allows "when necessary".
 const MAX_GET_QUERY = 6000;
 const ALL_RESULTS = 1000000; // MaxProfiles for the relatives search: every notable must come back
+/**
+ * A Descendants search on WikiTree+ stops once it has gone through about this many descendants, and the answer does
+ * not say so. Its searchLog does give the number gone through, so a search at or past it is known to be incomplete.
+ * (Found in November 2026: Kerstetter-367 at 10 generations went through 108,445 and missed cousins that a search
+ * for their own ancestor finds.)
+ */
+export const PLUS_DESCENDANTS_LIMIT = 100000;
 
 const TREE_FIELDS = ["Id", "Name", "Father", "Mother", "BioFather", "BioMother", "Gender", "Meta"];
 // What the view shows about the starting profile, asked for in the same call as its family.
@@ -108,9 +115,9 @@ export function plusPause(now = Date.now()) {
     return latest || null;
 }
 
-function markRefused() {
+function markRefused(reason) {
     const at = Date.now();
-    plusRefusal = { at, until: at + plusSettings.coolOffMs };
+    plusRefusal = { at, until: at + plusSettings.coolOffMs, reason };
     try {
         browserStorage()?.setItem(REFUSED_KEY, JSON.stringify(plusRefusal));
     } catch {
@@ -134,33 +141,66 @@ export function clearPlusPause() {
  * refusal (isPause true: nothing was sent). at and until are when that refusal happened and when the pause ends.
  */
 export class PlusUnavailableError extends Error {
-    constructor(detail, { isPause = false, at = 0, until = 0 } = {}) {
+    constructor(detail, { isPause = false, at = 0, until = 0, reason = "", blockedAddress = "" } = {}) {
         super(`WikiTree+ is not available to Notable Relatives (${detail}).`);
         this.name = "PlusUnavailableError";
-        Object.assign(this, { isPause, at, until, detail });
+        // reason: what WikiTree+ answered when it turned a search away (the one now being rested from, for a pause).
+        Object.assign(this, { isPause, at, until, detail, reason: reason || detail, blockedAddress });
     }
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-/** What to tell the reader, saying whether a search was actually sent. */
+// A refusal that comes back as a web page rather than WikiTree+'s JSON answer is its block page: per
+// Help:WikiTree_Plus_API, "Requests from IP ranges blocked for AI-bot activity get HTTP 429 with an HTML page."
+
+/**
+ * WikiTree's private-message page for Aleš Trtnik, who runs WikiTree+ (user 10816946 is Trtnik-2, per the example in
+ * Help:WikiTree_Plus_API). WikiTree+'s block page asks blocked members to message him with their internet address.
+ */
+export const ALES_MESSAGE_URL = "https://www.wikitree.com/index.php?title=Special:PrivateMessage&who=10816946";
+
+/** The internet address WikiTree+'s block page names ("... include your IP: 203.0.113.7 ..."), or "". */
+export function blockedAddressFrom(page) {
+    const m = /\bIP\b[^0-9a-f]{0,20}((?:\d{1,3}\.){3}\d{1,3}|[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7})/i.exec(
+        String(page || "")
+    );
+    return m ? m[1] : "";
+}
+
+function blockAdvice(address) {
+    return (
+        "WikiTree+ blocks some ranges of internet addresses because of AI-bot traffic, which can include some " +
+        "internet providers, VPNs, and work or school networks. To be unblocked, send Aleš Trtnik, who runs WikiTree+, " +
+        `a private message on WikiTree with your internet address${address ? ` (${address})` : ""}, and he will ` +
+        "unblock it. Until then, another internet connection may work."
+    );
+}
 const REFUSAL_REASONS = {
-    "HTTP 429": 'it answered "too many requests" (HTTP 429), which usually means it is busy',
-    "HTTP 403": 'it answered "forbidden" (HTTP 403)',
-    "search refused": "it dropped the search without running it",
+    "HTTP 429": { what: 'it answered "too many requests" (HTTP 429), which usually means it is busy' },
+    "HTTP 403": { what: 'it answered "forbidden" (HTTP 403)' },
+    "HTTP 429 page": { what: "it blocked your internet connection (HTTP 429)", isBlock: true },
+    "HTTP 403 page": { what: "it blocked your internet connection (HTTP 403)", isBlock: true },
+    "search refused": { what: "it dropped the search without running it" },
 };
 
-/** What to tell the reader, saying whether a search was actually sent and what WikiTree+ answered. */
+/** True when WikiTree+ answered with its block page, so the reader can be pointed to Aleš to be unblocked. */
+export const isBlockedConnection = (err) => Boolean(REFUSAL_REASONS[err?.reason]?.isBlock);
+
+/** What to tell the reader, saying whether a search was actually sent, what WikiTree+ answered, and what to try. */
 export function plusUnavailableMessage(err) {
+    const reason = REFUSAL_REASONS[err?.reason] || {};
+    const what = reason.what ? `: ${reason.what}.` : ".";
+    const advice = reason.isBlock ? ` ${blockAdvice(err?.blockedAddress)}` : "";
     if (err?.isPause) {
         return (
-            `No search was sent to WikiTree+: it turned away a search from Notable Relatives at ${clock(err.at)}, ` +
-            `so the app is giving it a rest until ${clock(err.until)}. Choose "Try WikiTree+ now" to ask anyway.`
+            `No search was sent to WikiTree+. It turned away a search from Notable Relatives at ${clock(err.at)}${what}` +
+            `${advice} The app is giving WikiTree+ a rest until ${clock(err.until)}; choose "Try WikiTree+ now" to ask ` +
+            "anyway."
         );
     }
-    const why = REFUSAL_REASONS[err?.detail] ? ` (${REFUSAL_REASONS[err.detail]})` : "";
     return (
-        `WikiTree+ turned away this search${why}, so it stopped before finding any notable relatives. ` +
+        `WikiTree+ turned away this search${what}${advice} The search stopped before finding any notable relatives. ` +
         `The app will rest until ${clock(err?.until || Date.now())}; choose "Try WikiTree+ now" to ask again sooner.`
     );
 }
@@ -221,8 +261,14 @@ async function plusJson(url, { fetchFn = fetch, signal, sentQuery = "", init } =
         async () => {
             const res = await (init ? fetchFn(url, init) : fetchFn(url)); // no signal: see above
             if (res.status === 429 || res.status === 403) {
-                markRefused();
-                throw new PlusUnavailableError(`HTTP ${res.status}`, plusRefusal);
+                const body = await (res.text ? res.text().catch(() => "") : Promise.resolve(""));
+                const isPage = /^\s*</.test(body);
+                const reason = `HTTP ${res.status}${isPage ? " page" : ""}`;
+                console.warn(`Notable Relatives: WikiTree+ answered ${reason}`);
+                markRefused(reason);
+                // The address is only shown to the reader, never saved.
+                const blockedAddress = isPage ? blockedAddressFrom(body) : "";
+                throw new PlusUnavailableError(reason, { ...plusRefusal, blockedAddress });
             }
             if (!res.ok)
                 throw new Error(`The WikiTree+ search did not answer (HTTP ${res.status}). Please try again later.`);
@@ -230,7 +276,7 @@ async function plusJson(url, { fetchFn = fetch, signal, sentQuery = "", init } =
             const error = json?.response?.error;
             // A search sent with text that comes back empty was dropped by WikiTree+: it is refusing this app.
             if (error && sentQuery.trim() && json?.request && !json.request.query) {
-                markRefused();
+                markRefused("search refused");
                 throw new PlusUnavailableError("search refused", plusRefusal);
             }
             if (error) throw new Error(`WikiTree+ could not run the search: ${error}`);
@@ -244,8 +290,24 @@ async function plusJson(url, { fetchFn = fetch, signal, sentQuery = "", init } =
  * Profile ids matching a WikiTree+ query. isCut is true when WikiTree+ stopped at MaxProfiles ("more"), so some
  * matches are missing. An empty query is not sent at all. @returns {Promise<{ids:number[], dataDate:string, isCut:boolean}>}
  */
+/** How many descendants a WikiTree+ search went through, from its searchLog ("des:...: 108445"); 0 when none. */
+/** The notice for a search WikiTree+ stopped part way (isTooBig). */
+export function tooBigMessage(generations) {
+    const gens = Number(generations) || DEFAULT_GENERATIONS;
+    return (
+        `WikiTree+ stopped this search part way, so some notable relatives are missing. The ancestors ${gens} ` +
+        `generations back have more than ${PLUS_DESCENDANTS_LIMIT.toLocaleString("en-US")} descendants between them, ` +
+        "more than WikiTree+ goes through in one search. Choose fewer generations back for a complete list."
+    );
+}
+
+export function descendantsSearched(searchLog) {
+    const m = /^des:[^\r\n]*:\s*(\d+)\s*$/m.exec(String(searchLog || ""));
+    return m ? Number(m[1]) : 0;
+}
+
 export async function fetchPlusIds(query, { maxProfiles = 0, ...options } = {}) {
-    if (!String(query || "").trim()) return { ids: [], dataDate: "", isCut: false };
+    if (!String(query || "").trim()) return { ids: [], dataDate: "", isCut: false, isTooBig: false };
     let url = plusSearchUrl(query, PLUS_APP_ID, null, maxProfiles);
     let init;
     if (encodeURIComponent(query).length > MAX_GET_QUERY) {
@@ -263,6 +325,8 @@ export async function fetchPlusIds(query, { maxProfiles = 0, ...options } = {}) 
         ids: (json?.response?.profiles || []).map(Number).filter(Boolean),
         dataDate: json?.debug?.dataDate || "",
         isCut: json?.response?.more === true,
+        // WikiTree+ stopped going through the descendants part way, so some relatives are missing.
+        isTooBig: descendantsSearched(json?.response?.searchLog) >= PLUS_DESCENDANTS_LIMIT,
     };
 }
 
@@ -973,10 +1037,12 @@ export async function searchAncestral({
     let dataDate = "";
     let failedQueries = 0;
     let isCut = false;
+    let isTooBig = false;
     const plus = async (query, options = {}) => {
         const res = await fetchPlusIds(query, { fetchFn, signal, ...options });
         dataDate = dataDate || res.dataDate;
         isCut = isCut || res.isCut;
+        isTooBig = isTooBig || res.isTooBig;
         return res.ids;
     };
 
@@ -1026,6 +1092,8 @@ export async function searchAncestral({
         dataDate,
         failedQueries,
         isPartial: isPartial || isCut,
+        // Kept apart from isPartial: asking again gives the same answer, so the result is still saved, with a notice.
+        isTooBig,
         walkError,
     };
 }

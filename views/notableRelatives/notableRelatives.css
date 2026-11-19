@@ -80,6 +80,14 @@
   background: #ffeeee;
   color: #333333;
 }
+.nr-view .nr-notice {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 4px solid #fcb815;
+  background: #ffee99;
+  color: #333333;
+}
 .nr-view .nr-saved {
   color: var(--nr-muted);
   white-space: nowrap;

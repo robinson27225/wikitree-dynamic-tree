@@ -5,7 +5,26 @@ to the author's profile and the Help page. To release: change `VERSION` in `nota
 test checks they agree), then upload. A fix raises the last number, a new feature the middle one. Documentation-only
 changes (README, Space page drafts) don't get a new version.
 
-## 0.3.1 (Not yet released)
+## 0.3.3 (19 November 2026)
+
+-   **A search too big for WikiTree+ now says so, instead of quietly leaving relatives out.** WikiTree+ stops a
+    descendants search once it has gone through about 100,000 descendants, without saying it stopped. Further back,
+    the ancestors' descendants add up fast: for one tester, 8 generations went through about 11,000 descendants and
+    found 4 notable cousins, while 10 generations reached that limit and lost all 4. The app now reads how far
+    WikiTree+ got, and when a search reaches the limit it shows the relatives found with a notice that some are
+    missing and that fewer generations back give a complete list. It still sends only one search. Results saved by
+    earlier versions are searched again once, so an incomplete one gets its notice. Reported by Kerstetter-367.
+
+## 0.3.2 (18 November 2026)
+
+-   **When WikiTree+ blocks your internet connection, the message says so and how to fix it.** WikiTree+ blocks some
+    ranges of internet addresses because of AI-bot traffic and answers them with a block page (HTTP 429), which the
+    reader never saw. The app now tells that apart from WikiTree+ just being busy, explains it, shows the internet
+    address the block page names (only on screen; it is never saved), and offers a **Message Aleš to be unblocked**
+    link to WikiTree's private message page for Aleš Trtnik, who runs WikiTree+ and unblocks members who ask. The
+    reason is repeated while the app rests. Reported by James Wall (Wall-6242).
+
+## 0.3.1 (18 November 2026)
 
 Fixes and a request from testing 0.3.0.
 

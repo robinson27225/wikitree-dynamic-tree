@@ -26,7 +26,7 @@ const WIKI = "https://www.wikitree.com/wiki/";
 const FILTER_PARAMS = ["mode", "gens", "find", "parents", "group", "cat", "loc", "place", "marker", "q"];
 const PAGE_SIZE = 60; // cards shown per group before "Show more"
 const GENS_DELAY_MS = 800; // wait for the generations box to settle before searching
-const SAVED_KEY = "notableRelatives:results:v6:"; // v6: ancestors within the chosen generations; no profile details
+const SAVED_KEY = "notableRelatives:results:v7:"; // v7: notes a search WikiTree+ stopped part way; no profile details
 const SAVED_MAX_CHARS = 2_000_000;
 
 // Every WikiTree API request from the page, at least 300 ms apart (the API allows 200 a minute per user).
@@ -238,7 +238,10 @@ window.NotableRelativesView = class NotableRelativesView extends View {
                 this.showPrivateProfileMessage(signal);
                 return;
             }
-            this.showProblem(this.errorMessage(err), { tryNow: err?.name === "PlusUnavailableError" });
+            this.showProblem(this.errorMessage(err), {
+                tryNow: err?.name === "PlusUnavailableError",
+                unblock: nr.isBlockedConnection(err),
+            });
         });
     }
 
@@ -277,12 +280,16 @@ window.NotableRelativesView = class NotableRelativesView extends View {
     // A search that could not finish says why in the results area as well as in the red bar at the top of the page,
     // which is easy to miss, so it never looks as if the app just stopped. After a WikiTree+ refusal, the reader
     // can ask again straight away (one request).
-    showProblem(message, { tryNow = false } = {}) {
+    showProblem(message, { tryNow = false, unblock = false } = {}) {
         wtViewRegistry.showError(message);
         const results = this.container.querySelector(".nr-results");
         if (!results) return;
         results.innerHTML =
             `<p class="nr-problem" role="alert">${esc(message)}</p>` +
+            (unblock
+                ? `<a class="small button nr-unblock" href="${esc(nr.ALES_MESSAGE_URL)}" target="_blank" rel="noopener"
+                    title="WikiTree's private message page for Aleš Trtnik, who runs WikiTree+">Message Aleš to be unblocked</a> `
+                : "") +
             (tryNow ? `<button type="button" class="small button nr-try-now">Try WikiTree+ now</button>` : "");
         results.querySelector(".nr-try-now")?.addEventListener("click", () => {
             nr.clearPlusPause();
@@ -490,6 +497,7 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             data.dataDate = result.dataDate;
             data.failedQueries = result.failedQueries;
             data.isPartial = result.isPartial;
+            data.isTooBig = result.isTooBig;
             data.isDone = true;
             // A stopped or incomplete search is not kept, so it can be run again.
             if (!data.isPartial && !data.failedQueries && this.data === data) {
@@ -655,7 +663,9 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             const only = d.find && d.find !== "all" ? ` (${nr.FIND_LABELS[d.find]})` : "";
             this.setSummary(
                 `${count} of ${rootLink} through shared ancestors ${reach}${only}${which}` +
-                    ` (${plural(d.ancestorCount, "ancestor")} searched${stopped}).${asOf}`
+                    ` (${plural(d.ancestorCount, "ancestor")} searched${stopped}).${asOf}` +
+                    // Next to the count, not only in the bar at the top of the page, which is easy to miss.
+                    (d.isTooBig ? `<span class="nr-notice" role="note">${esc(nr.tooBigMessage(d.gens))}</span>` : "")
             );
             if (d.isDone || d.isStopped) this.setProgress("");
         }
@@ -665,6 +675,8 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             wtViewRegistry.showWarning(
                 "WikiTree+ did not answer the search, so no notable relatives could be found. Please try again later."
             );
+        } else if (d.isTooBig) {
+            wtViewRegistry.showWarning(nr.tooBigMessage(d.gens));
         } else if (d.isPartial) {
             wtViewRegistry.showWarning(
                 "WikiTree stopped before listing every relative, so some may be missing. Try again later."
@@ -678,9 +690,11 @@ window.NotableRelativesView = class NotableRelativesView extends View {
             const tip =
                 d.mode === "cc7"
                     ? "Try the shared-ancestors search."
-                    : d.gens < nr.MAX_GENERATIONS
-                      ? "Try more generations back."
-                      : "";
+                    : d.isTooBig
+                      ? "Try fewer generations back."
+                      : d.gens < nr.MAX_GENERATIONS
+                        ? "Try more generations back."
+                        : "";
             this.container.querySelector(".nr-results").innerHTML =
                 d.isDone || d.isStopped
                     ? `<p class="nr-empty">No notable relatives were found for ${rootLink}. Notable profiles carry a

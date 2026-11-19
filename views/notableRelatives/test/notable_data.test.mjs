@@ -120,7 +120,7 @@ test("fetchPlusNotableIds asks WikiTree+ for NotableProfile in the CC7", async (
         };
     };
     const res = await fetchPlusNotableIds(722, { fetchFn });
-    assert.deepEqual(res, { ids: [722, 726], dataDate: "2026-11-01", isCut: false });
+    assert.deepEqual(res, { ids: [722, 726], dataDate: "2026-11-01", isCut: false, isTooBig: false });
     assert.match(url, /WTWebProfileSearch\/TA-notableRelatives\.json\?Query=CC7%3D722%20NotableProfile/);
     assert.match(url, /appID=TA-notableRelatives/);
 
@@ -1009,12 +1009,13 @@ test("an empty search is never sent to WikiTree+", async () => {
         calls++;
         return json({ request: { query: "" }, response: { error: "No search text." } });
     };
-    assert.deepEqual(await fetchPlusIds("", { fetchFn }), { ids: [], dataDate: "", isCut: false });
+    assert.deepEqual(await fetchPlusIds("", { fetchFn }), { ids: [], dataDate: "", isCut: false, isTooBig: false });
     // Biological chosen while both birth parents are private: no parents to ask about, so no query at all.
     assert.deepEqual(await fetchPlusIds(relativesQuery(1, [], []), { fetchFn }), {
         ids: [],
         dataDate: "",
         isCut: false,
+        isTooBig: false,
     });
     assert.equal(calls, 0);
     assert.equal(plusPause(), null, "no pause starts");
@@ -1282,4 +1283,84 @@ test("no path, or one through a marriage, keeps the general label", async () => 
     assert.equal(await fetchCousinRelationship("A-1", "B-2", "Female", { api: none }), null);
     const marriage = async () => [{ status: "", path: [{}, { pathType: "spouse" }, { pathType: "parent" }] }];
     assert.equal(await fetchCousinRelationship("A-1", "B-2", "Female", { api: marriage }), null);
+});
+
+// ---------- WikiTree+ block page ----------
+
+import { isBlockedConnection, blockedAddressFrom, ALES_MESSAGE_URL } from "../notable_data.js";
+
+test("the block page's address is read, and Aleš's message page is WikiTree user 10816946 (Trtnik-2)", () => {
+    assert.equal(blockedAddressFrom("including your IP: 2001:db8::7 and he will"), "2001:db8::7");
+    assert.equal(blockedAddressFrom("no address here"), "");
+    assert.equal(ALES_MESSAGE_URL, "https://www.wikitree.com/index.php?title=Special:PrivateMessage&who=10816946");
+});
+
+test("a 429 that comes back as a web page is named as a block on the connection", async () => {
+    resetPlusQueue();
+    // WikiTree+'s block page, with an example address from the documentation range.
+    const page =
+        "<!DOCTYPE html><html><h1>Blocked request</h1><p>Your request was blocked since it originates from an IP " +
+        "range blocked due to AI bots activity.</p><p>If you are a WikiTree user send a private message to Aleš " +
+        "including your IP: 203.0.113.7 and he will unblock you.</p></html>";
+    const blocked = async () => ({ ok: false, status: 429, text: async () => page });
+    const err = await fetchPlusNotableIds(1, { fetchFn: blocked }).catch((e) => e);
+    assert.equal(err.reason, "HTTP 429 page");
+    assert.equal(err.blockedAddress, "203.0.113.7");
+    assert.ok(isBlockedConnection(err));
+    const msg = plusUnavailableMessage(err);
+    assert.match(msg, /blocked your internet connection/);
+    assert.match(msg, /Aleš Trtnik.*\(203\.0\.113\.7\)/);
+    // The rest that follows repeats the reason, without the address (which is never saved).
+    const pause = await fetchPlusNotableIds(2, { fetchFn: blocked }).catch((e) => e);
+    assert.equal(pause.isPause, true);
+    assert.match(plusUnavailableMessage(pause), /No search was sent.*blocked your internet connection/);
+    assert.doesNotMatch(plusUnavailableMessage(pause), /203\.0\.113\.7/);
+    assert.equal(JSON.stringify(plusPause() || {}).includes("203.0.113.7"), false, "the address is not stored");
+    resetPlusQueue();
+});
+
+test("a 429 with a JSON answer is still called busy", async () => {
+    resetPlusQueue();
+    const busy = async () => ({ ok: false, status: 429, text: async () => '{"error":"Too many requests"}' });
+    const err = await fetchPlusNotableIds(1, { fetchFn: busy }).catch((e) => e);
+    assert.equal(err.reason, "HTTP 429");
+    assert.match(plusUnavailableMessage(err), /usually means it is busy/);
+    resetPlusQueue();
+});
+
+// ---------- a Descendants search WikiTree+ stopped part way ----------
+
+import { descendantsSearched, tooBigMessage, PLUS_DESCENDANTS_LIMIT } from "../notable_data.js";
+
+test("the number of descendants gone through is read from WikiTree+'s searchLog", () => {
+    // As WikiTree+ wrote them for Kerstetter-367 at 8 and at 10 generations (ids shortened).
+    assert.equal(
+        descendantsSearched("des:04257E3A:51840561,616946: 11245\r\nNotableProfile: 111159\r\nAND: 4\r\n"),
+        11245
+    );
+    assert.equal(descendantsSearched("des:04257E3A:46500,8333235: 108445\r\nNotableProfile: 111159\r\n"), 108445);
+    assert.equal(descendantsSearched("cc7:04257E3A:26911081: 114\r\nNotableProfile: 111159\r\n"), 0);
+    assert.equal(descendantsSearched(undefined), 0);
+});
+
+test("a search that went through the most WikiTree+ allows is kept, with a notice to choose fewer generations", async () => {
+    resetPlusQueue();
+    const api = async (data) => [{ status: "", people: data.ancestors ? { 2: person(2, 1) } : {} }];
+    const answer = (walked) => async () =>
+        json({
+            response: { found: 1, profiles: [9], searchLog: `des:04257E3A:2: ${walked}\r\nNotableProfile: 111159\r\n` },
+            debug: { dataDate: "2026-11-15" },
+        });
+    const big = await searchAncestral({ rootId: 1, generations: 10, api, fetchFn: answer(108445) });
+    assert.equal(big.isTooBig, true);
+    assert.equal(big.isPartial, false, "asking again gives the same answer, so it is not a partial search");
+    resetPlusQueue();
+    const small = await searchAncestral({ rootId: 1, generations: 8, api, fetchFn: answer(11245) });
+    assert.equal(small.isTooBig, false);
+    assert.equal(PLUS_DESCENDANTS_LIMIT, 100000);
+    const msg = tooBigMessage(10);
+    assert.match(msg, /stopped this search part way/);
+    assert.match(msg, /10 generations back have more than 100,000 descendants/);
+    assert.match(msg, /fewer generations back/);
+    resetPlusQueue();
 });
